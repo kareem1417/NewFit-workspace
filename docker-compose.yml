@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: neofit_db
+    environment:
+      POSTGRES_DB: ringside
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: rootpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - neofit_network
+
+  ai_api:
+    build: ./ai-service
+    container_name: neofit_ai_api
+    environment:
+      # بنستخدم اسم الـ service (db) كـ host عشان يشوف قاعدة البيانات جوة الدوكر
+      - DATABASE_URL=host=db dbname=ringside user=postgres password=rootpassword port=5432
+      # لو معاك الـ API key في فايل .env بره، بنمرره هنا
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    networks:
+      - neofit_network
+
+  backend:
+    build: ./backend-node
+    container_name: neofit_backend
+    environment:
+      - PORT=3000
+      - DB_HOST=db
+      - DB_USER=postgres
+      - DB_PASSWORD=rootpassword
+      - DB_NAME=ringside
+      - AI_SERVICE_URL=http://ai_api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+      - ai_api
+    networks:
+      - neofit_network
+
+volumes:
+  pg_data:
+
+networks:
+  neofit_network:
+    driver: bridge

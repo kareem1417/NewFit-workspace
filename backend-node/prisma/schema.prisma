@@ -1,0 +1,512 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model age_groups {
+  id             Int              @id @default(autoincrement())
+  name           String           @db.VarChar(50)
+  min_age        Int
+  max_age        Int
+  description    String?
+  normative_data normative_data[]
+}
+
+model attribute_tests {
+  id                   Int                    @id @default(autoincrement())
+  sport_attribute_id   Int
+  test_name            String                 @db.VarChar(100)
+  weight               Decimal                @db.Decimal(5, 4)
+  unit                 String                 @db.VarChar(20)
+  higher_is_better     Boolean?               @default(true)
+  description          String?
+  created_at           DateTime?              @default(now()) @db.Timestamptz(6)
+  sport_attributes     sport_attributes       @relation(fields: [sport_attribute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  normative_data       normative_data[]
+  snapshot_test_values snapshot_test_values[]
+}
+
+model chat_messages {
+  id                    String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  session_id            String        @db.Uuid
+  role                  chat_role
+  content               String
+  suggested_program_ids String[]      @default([]) @db.Uuid
+  metadata              Json?         @default("{}")
+  created_at            DateTime?     @default(now()) @db.Timestamptz(6)
+  chat_sessions         chat_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([session_id, created_at], map: "chat_messages_session_idx")
+}
+
+model chat_sessions {
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String          @db.Uuid
+  title         String?         @default("New Conversation") @db.VarChar(255)
+  created_at    DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime?       @default(now()) @db.Timestamptz(6)
+  chat_messages chat_messages[]
+  users         users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, updated_at(sort: Desc)], map: "chat_sessions_user_idx")
+}
+
+model comments {
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  post_id    String    @db.Uuid
+  user_id    String    @db.Uuid
+  content    String
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+  posts      posts     @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([post_id, created_at], map: "comments_post_idx")
+}
+
+model enrollments {
+  id                                                                       String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                                                                  String               @db.Uuid
+  program_id                                                               String               @db.Uuid
+  start_date                                                               DateTime             @db.Date
+  preferred_days                                                           String[]             @default([])
+  preferred_time                                                           DateTime?            @db.Time(6)
+  status                                                                   enrollment_status?   @default(active)
+  completed_date                                                           DateTime?            @db.Date
+  baseline_snapshot_id                                                     String               @db.Uuid
+  posttest_snapshot_id                                                     String?              @db.Uuid
+  created_at                                                               DateTime?            @default(now()) @db.Timestamptz(6)
+  updated_at                                                               DateTime?            @default(now()) @db.Timestamptz(6)
+  physical_snapshots_enrollments_baseline_snapshot_idTophysical_snapshots  physical_snapshots   @relation("enrollments_baseline_snapshot_idTophysical_snapshots", fields: [baseline_snapshot_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  physical_snapshots_enrollments_posttest_snapshot_idTophysical_snapshots  physical_snapshots?  @relation("enrollments_posttest_snapshot_idTophysical_snapshots", fields: [posttest_snapshot_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  programs                                                                 programs             @relation(fields: [program_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                                                                    users                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  physical_snapshots_physical_snapshots_program_enrollment_idToenrollments physical_snapshots[] @relation("physical_snapshots_program_enrollment_idToenrollments")
+  program_ratings                                                          program_ratings[]
+  completedSessions                                                        completed_sessions[]
+
+  @@unique([user_id, program_id, start_date])
+  @@index([program_id], map: "enrollments_program_idx")
+  @@index([user_id], map: "enrollments_user_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model follows {
+  follower_id                      String    @db.Uuid
+  followee_id                      String    @db.Uuid
+  created_at                       DateTime? @default(now()) @db.Timestamptz(6)
+  users_follows_followee_idTousers users     @relation("follows_followee_idTousers", fields: [followee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_follows_follower_idTousers users     @relation("follows_follower_idTousers", fields: [follower_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([follower_id, followee_id])
+  @@index([followee_id], map: "follows_followee_idx")
+  @@index([follower_id], map: "follows_follower_idx")
+}
+
+model knowledge_chunks {
+  id           String  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  content      String
+  source       String? @db.VarChar(255)
+  content_type String? @default("general") @db.VarChar(50)
+
+  // 📌 السطرين دول اللي هيحموا الداتا بتاعتك من المسح
+  sport String? @db.VarChar(100)
+  topic String? @db.VarChar(100)
+
+  embedding  Unsupported("vector")?
+  metadata   Json?                  @default("{}")
+  created_at DateTime?              @default(now()) @db.Timestamptz(6)
+
+  @@index([embedding], map: "knowledge_embedding_idx")
+}
+
+model likes {
+  post_id    String    @db.Uuid
+  user_id    String    @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  posts      posts     @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([post_id, user_id])
+}
+
+model normative_data {
+  id                Int               @id @default(autoincrement())
+  sport_id          Int
+  attribute_test_id Int
+  weight_class      weight_class
+  level             competitive_level
+  age_group_id      Int
+  mean_value        Decimal           @db.Decimal(10, 2)
+  std_dev           Decimal           @db.Decimal(10, 2)
+  sample_size       Int?
+  source            String?           @db.VarChar(255)
+  created_at        DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?         @default(now()) @db.Timestamptz(6)
+  age_groups        age_groups        @relation(fields: [age_group_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  attribute_tests   attribute_tests   @relation(fields: [attribute_test_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sports            sports            @relation(fields: [sport_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([sport_id, attribute_test_id, weight_class, level, age_group_id])
+}
+
+model physical_snapshots {
+  id                                                                String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                                                           String                 @db.Uuid
+  sport_id                                                          Int
+  snapshot_type                                                     snapshot_type
+  program_enrollment_id                                             String?                @db.Uuid
+  notes                                                             String?
+  created_at                                                        DateTime?              @default(now()) @db.Timestamptz(6)
+  enrollments_enrollments_baseline_snapshot_idTophysical_snapshots  enrollments[]          @relation("enrollments_baseline_snapshot_idTophysical_snapshots")
+  enrollments_enrollments_posttest_snapshot_idTophysical_snapshots  enrollments[]          @relation("enrollments_posttest_snapshot_idTophysical_snapshots")
+  enrollments_physical_snapshots_program_enrollment_idToenrollments enrollments?           @relation("physical_snapshots_program_enrollment_idToenrollments", fields: [program_enrollment_id], references: [id], onUpdate: NoAction, map: "fk_snapshot_enrollment")
+  sports                                                            sports                 @relation(fields: [sport_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                                                             users                  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  snapshot_test_values                                              snapshot_test_values[]
+}
+
+model posts {
+  id                  String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id             String                   @db.Uuid
+  content             String
+  image_path          String?                  @db.VarChar(500)
+  is_system_generated Boolean?                 @default(false)
+  program_id          String?                  @db.Uuid
+  like_count          Int?                     @default(0)
+  comment_count       Int?                     @default(0)
+  metadata            Json?                    @default("{}")
+  created_at          DateTime?                @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?                @default(now()) @db.Timestamptz(6)
+  search_vector       Unsupported("tsvector")?
+  comments            comments[]
+  likes               likes[]
+  programs            programs?                @relation(fields: [program_id], references: [id], onUpdate: NoAction)
+  users               users                    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([search_vector], map: "posts_search_idx", type: Gin)
+  @@index([user_id, created_at(sort: Desc)], map: "posts_user_created_idx")
+}
+
+model program_blocks {
+  id               String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  program_id       String             @db.Uuid
+  name             String             @db.VarChar(255)
+  description      String?
+  order_index      Int
+  week_start       Int
+  week_end         Int
+  created_at       DateTime?          @default(now()) @db.Timestamptz(6)
+  programs         programs           @relation(fields: [program_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  program_sessions program_sessions[]
+
+  @@unique([program_id, order_index])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model program_ratings {
+  id            String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  enrollment_id String      @db.Uuid
+  user_id       String      @db.Uuid
+  program_id    String      @db.Uuid
+  rating        Int         @db.SmallInt
+  review        String?
+  created_at    DateTime?   @default(now()) @db.Timestamptz(6)
+  enrollments   enrollments @relation(fields: [enrollment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  programs      programs    @relation(fields: [program_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, program_id])
+  @@index([program_id], map: "ratings_program_idx")
+}
+
+model program_sessions {
+  id                         String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  block_id                   String               @db.Uuid
+  name                       String               @db.VarChar(255)
+  description                String?
+  day_offset                 Int
+  estimated_duration_minutes Int?
+  created_at                 DateTime?            @default(now()) @db.Timestamptz(6)
+  program_blocks             program_blocks       @relation(fields: [block_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  session_exercises          session_exercises[]
+  completedSessions          completed_sessions[]
+}
+
+model programs {
+  id                String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  coach_id          String                   @db.Uuid
+  sport_id          Int
+  title             String                   @db.VarChar(255)
+  description       String
+  goal_primary      program_goal
+  level_target      competitive_level
+  duration_weeks    Int
+  sessions_per_week Int
+  cover_image       String?                  @db.VarChar(500)
+  rating_avg        Decimal?                 @default(0.0) @db.Decimal(4, 2)
+  rating_count      Int?                     @default(0)
+  enrollment_count  Int?                     @default(0)
+  completion_count  Int?                     @default(0)
+  is_published      Boolean?                 @default(false)
+  created_at        DateTime?                @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?                @default(now()) @db.Timestamptz(6)
+  search_vector     Unsupported("tsvector")?
+  enrollments       enrollments[]
+  posts             posts[]
+  program_blocks    program_blocks[]
+  program_ratings   program_ratings[]
+  users             users                    @relation(fields: [coach_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sports            sports                   @relation(fields: [sport_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([coach_id], map: "programs_coach_idx")
+  @@index([goal_primary], map: "programs_goal_idx")
+  @@index([search_vector], map: "programs_search_idx", type: Gin)
+  @@index([sport_id], map: "programs_sport_idx")
+}
+
+model session_exercises {
+  id                 String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  session_id         String                @db.Uuid
+  exercise_name      String                @db.VarChar(255)
+  sets               Int
+  reps               String                @db.VarChar(50)
+  rest_seconds       Int
+  intensity_note     String?               @db.VarChar(100)
+  notes              String?
+  order_index        Int
+  created_at         DateTime?             @default(now()) @db.Timestamptz(6)
+  program_sessions   program_sessions      @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  completedExercises completed_exercises[]
+}
+
+model snapshot_test_values {
+  id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  snapshot_id        String             @db.Uuid
+  attribute_test_id  Int
+  value              Decimal            @db.Decimal(10, 2)
+  unit               String             @db.VarChar(20)
+  attribute_tests    attribute_tests    @relation(fields: [attribute_test_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  physical_snapshots physical_snapshots @relation(fields: [snapshot_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([snapshot_id, attribute_test_id])
+  @@index([snapshot_id], map: "snapshot_values_snapshot_idx")
+  @@index([attribute_test_id], map: "snapshot_values_test_idx")
+}
+
+model sport_attributes {
+  id              Int               @id @default(autoincrement())
+  sport_id        Int
+  name            String            @db.VarChar(100)
+  display_order   Int
+  description     String?
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  attribute_tests attribute_tests[]
+  sports          sports            @relation(fields: [sport_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([sport_id, name])
+}
+
+model sports {
+  id                  Int                   @id @default(autoincrement())
+  name                String                @unique @db.VarChar(100)
+  description         String?
+  icon                String?               @db.VarChar(255)
+  is_active           Boolean?              @default(true)
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  normative_data      normative_data[]
+  physical_snapshots  physical_snapshots[]
+  programs            programs[]
+  sport_attributes    sport_attributes[]
+  user_sport_profiles user_sport_profiles[]
+}
+
+model user_sport_profiles {
+  id           String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String            @db.Uuid
+  sport_id     Int
+  level        competitive_level
+  weight_class weight_class
+  is_primary   Boolean?          @default(true)
+  created_at   DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime?         @default(now()) @db.Timestamptz(6)
+  sports       sports            @relation(fields: [sport_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users        users             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, sport_id])
+}
+
+model user_tokens {
+  user_token_id String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String          @db.Uuid
+  token         String          @unique @db.VarChar(255)
+  expires_at    DateTime        @db.Timestamp(6)
+  token_type    token_type_enum
+  created_at    DateTime?       @default(now()) @db.Timestamp(6)
+  updated_at    DateTime?       @default(now()) @db.Timestamp(6)
+  users         users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+// 📌 الجدول الجديد الخاص بالقياسات (يتم ربطه باليوزر 1-to-1)
+model user_metrics {
+  id                     String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                String         @unique @db.Uuid
+  height_cm              Decimal        @db.Decimal(5, 2)
+  weight_kg              Decimal        @db.Decimal(5, 2)
+  goal                   user_goal_enum
+  training_days_per_week Int
+  years_training         Decimal        @db.Decimal(4, 2)
+  has_injury_history     Boolean        @default(false)
+
+  // التقييمات من 1 لـ 10
+  endurance_score     Int @default(5)
+  strength_score      Int @default(5)
+  speed_score         Int @default(5)
+  flexibility_score   Int @default(5)
+  explosiveness_score Int @default(5)
+  recovery_score      Int @default(5)
+
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+
+  users users @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model users {
+  id                                 String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  username                           String                   @unique @db.VarChar(50)
+  email                              String                   @unique @db.VarChar(255)
+  password_hash                      String                   @db.VarChar(255)
+  role                               user_role                @default(athlete)
+  profile_photo                      String?                  @db.VarChar(500)
+  bio                                String?
+  date_of_birth                      DateTime                 @db.Date
+  social_links                       Json?                    @default("{}")
+  role_models                        String[]                 @default([])
+  is_active                          Boolean?                 @default(true)
+  created_at                         DateTime?                @default(now()) @db.Timestamptz(6)
+  updated_at                         DateTime?                @default(now()) @db.Timestamptz(6)
+  search_vector                      Unsupported("tsvector")?
+  chat_sessions                      chat_sessions[]
+  comments                           comments[]
+  enrollments                        enrollments[]
+  follows_follows_followee_idTousers follows[]                @relation("follows_followee_idTousers")
+  follows_follows_follower_idTousers follows[]                @relation("follows_follower_idTousers")
+  likes                              likes[]
+  physical_snapshots                 physical_snapshots[]
+  posts                              posts[]
+  program_ratings                    program_ratings[]
+  programs                           programs[]
+  user_sport_profiles                user_sport_profiles[]
+  user_tokens                        user_tokens[]
+
+  // 📌 تم إضافة العلاقة هنا
+  user_metrics      user_metrics?
+  completedSessions completed_sessions[]
+
+  @@index([search_vector], map: "users_search_idx", type: Gin)
+}
+
+enum chat_role {
+  user
+  assistant
+}
+
+enum competitive_level {
+  novice
+  amateur
+  professional
+}
+
+enum enrollment_status {
+  active
+  completed
+  abandoned
+}
+
+enum program_goal {
+  strength
+  explosiveness
+  endurance
+  power
+  general
+}
+
+enum snapshot_type {
+  initial_onboarding
+  program_baseline
+  program_posttest
+  manual_update
+}
+
+enum token_type_enum {
+  REFRESH
+  VERIFICATION
+  FORGOT_PASSWORD
+}
+
+enum user_role {
+  athlete
+  coach
+  admin
+}
+
+enum weight_class {
+  flyweight
+  bantamweight
+  featherweight
+  lightweight
+  light_welterweight
+  welterweight
+  light_middleweight
+  middleweight
+  super_middleweight
+  light_heavyweight
+  cruiserweight
+  heavyweight
+}
+
+// 📌 الـ Enum الجديد الخاص بأهداف اليوزر
+enum user_goal_enum {
+  Weight_Loss @map("Weight Loss")
+  Muscle_Gain @map("Muscle Gain")
+  Endurance
+  Strength
+  Agility
+  Speed
+}
+
+model completed_sessions {
+  id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id            String   @db.Uuid
+  enrollment_id      String   @db.Uuid
+  program_session_id String   @db.Uuid
+  rpe                Int? // معدل الإجهاد من 1 لـ 10
+  duration_minutes   Int? // التمرين أخد وقت قد إيه
+  notes              String?
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  // العلاقات
+  users               users                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  enrollments         enrollments           @relation(fields: [enrollment_id], references: [id], onDelete: Cascade)
+  program_sessions    program_sessions      @relation(fields: [program_session_id], references: [id], onDelete: Cascade)
+  completed_exercises completed_exercises[]
+}
+
+model completed_exercises {
+  id                   String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  completed_session_id String   @db.Uuid
+  session_exercise_id  String   @db.Uuid
+  sets_data            Json // الداتا الفعلية زي: [{set: 1, reps: 8, weight: 50}]
+  notes                String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  // العلاقات
+  completed_sessions completed_sessions @relation(fields: [completed_session_id], references: [id], onDelete: Cascade)
+  session_exercises  session_exercises  @relation(fields: [session_exercise_id], references: [id], onDelete: Cascade)
+}

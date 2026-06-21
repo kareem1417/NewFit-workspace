@@ -1,8 +1,9 @@
+import os
 import psycopg2
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# هيقرأ من الكلاود، ولو ملقاهوش هيقرأ بتاع اللاب توب
-DB_CONFIG = os.environ.get("DATABASE_URL", "host=localhost dbname=ringside_db user=ringside password=ringside_pass port=5432")
+# توحيد بيانات الاتصال بقاعدة البيانات
+DB_CONFIG = os.environ.get("DATABASE_URL", "host=localhost dbname=ringside user=postgres password=rootpassword port=5432")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 def search_knowledge(query, sport="boxing", limit=3):
@@ -11,9 +12,10 @@ def search_knowledge(query, sport="boxing", limit=3):
     conn = psycopg2.connect(DB_CONFIG)
     cur = conn.cursor()
 
+    # التعديل هنا: استخدام knowledge_chunks
     cur.execute(
         """
-        SELECT content FROM knowledge_documents 
+        SELECT content FROM knowledge_chunks 
         WHERE sport = %s 
         ORDER BY embedding <=> %s::vector 
         LIMIT %s
