@@ -54,7 +54,7 @@ export const askQuestion = async (req: AuthRequest, res: Response): Promise<void
                 take: -6 // Take the latest 6 messages
             });
 
-            chatHistory = previousMessages.map(msg => ({
+            chatHistory = previousMessages.map((msg) => ({ // msg type
                 role: msg.role, // Will be 'user' or 'assistant' based on Enum
                 content: msg.content
             }));
@@ -282,7 +282,7 @@ export const getSessionMessages = async (req: AuthRequest, res: Response): Promi
         });
 
         // 3. Format data
-        const formattedMessages = await Promise.all(messages.map(async (msg) => {
+        const formattedMessages = await Promise.all(messages.map(async (msg) => { // message type
             // Variable must be defined here outside the if-block to be accessible in return
             let suggested_programs: { id: string; title: string }[] = [];
 
