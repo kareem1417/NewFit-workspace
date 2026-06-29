@@ -1,8 +1,9 @@
-import { Response } from "express";
+import { Response , NextFunction} from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { prisma } from "../config/prisma";
 import { v2 as cloudinary } from "cloudinary";
 
+// Works without Validator 
 export const deactivateAccount = async (
   req: AuthRequest,
   res: Response,
@@ -10,7 +11,6 @@ export const deactivateAccount = async (
   try {
     const userId = req.user?.sub as string;
 
-    // Pro trick: Use Transaction to ensure account deactivation and token deletion happen together
     await prisma.$transaction([
       // 1. Set account status to Inactive
       prisma.users.update({
@@ -18,7 +18,7 @@ export const deactivateAccount = async (
         data: { is_active: false },
       }),
 
-      // 2. Delete all Refresh Tokens to log out from all devices immediately
+
       prisma.user_tokens.deleteMany({
         where: { user_id: userId, token_type: "REFRESH" },
       }),
@@ -34,17 +34,18 @@ export const deactivateAccount = async (
     res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
+
+// works good without Validator 
 export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
 
-    // Fetch user data along with their sport profile
     const user = await prisma.users.findUnique({
       where: { id: userId },
       include: {
         user_sport_profiles: {
           where: { is_primary: true },
-          include: { sports: true }, // Include sport name (e.g. Boxing)
+          include: { sports: true },
         },
       },
     });
@@ -54,7 +55,7 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
 
-    // Safe exclusion: Removed refreshtoken since it's no longer on the user object
+    
     const { password_hash, ...safeUserData } = user;
 
     res.status(200).json({
@@ -69,63 +70,103 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
   }
 };
 
+// Done
+export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user?.sub as string;
+    const file = (req as any).file; 
+
+    if (!file) {
+      res.status(400).json({ success: false, error: "Validation error — file required." });
+      return;
+    }
+
+    const photoUrl = file.path;
+
+    const user = await prisma.users.findUnique({ where: { id: userId } });
+    if (user?.profile_photo) {
+      const publicIdMatch = user.profile_photo.match(/\/v\d+\/(.+?)\.\w+$/);
+      if (publicIdMatch && publicIdMatch[1]) {
+        await cloudinary.uploader.destroy(publicIdMatch[1]);
+      }
+    }
+
+    
+    const updatedUser = await prisma.users.update({
+      where: { id: userId },
+      data: { profile_photo: photoUrl },
+    });
+
+    res.status(201).json({
+      success: true,
+      profile_photo_url: updatedUser.profile_photo,
+    });
+
+  } catch (error: any) {
+    if (
+      error.message?.includes("format pdf not allowed") || 
+      error.http_code === 400
+    ) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid file type — only JPEG, PNG, WEBP accepted."
+      });
+      return;
+    }
+
+    if (error.message?.includes("limit") || error.message?.includes("large")) {
+      res.status(400).json({
+        success: false,
+        error: "File size exceeds limit."
+      });
+      return;
+    }
+
+    next(error); 
+  }
+};
+
+// Done 
 export const updateMe = async (
-  req: AuthRequest,
+  req: AuthRequest, 
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
+    const { bio, username, social_links, role_models, role } = req.body;
 
-    // Receive optional fields from DTO
-    const { bio, username, social_links, role_models } = req.body;
-    if (social_links !== undefined) {
-      // بنعمل فحص عشان نتأكد إنها Object، ومش Null، ومش Array
-      if (
-        typeof social_links !== "object" ||
-        social_links === null ||
-        Array.isArray(social_links)
-      ) {
-        res.status(400).json({
-          success: false,
-          error: "Validation error — must be JSON object.",
-        });
-        return;
-      }
+    if (username) {
+      const sanitizedUsername = username.trim();
 
-      // 🎯 2. (خطوة سينيور إضافية) التأكد إن القيم اللي جوه الـ Object دي عبارة عن لينكات بجد
-      // يعني ميجيش يبعتلك {"instagram": "my_account"}، لازم يبعت لينك كامل
-      for (const key in social_links) {
-        const url = social_links[key];
-        if (typeof url !== "string" || !url.startsWith("http")) {
-          res.status(400).json({
-            success: false,
-            error: `Validation error — invalid social media link for ${key}. Must be a valid URL starting with http/https.`,
+      const existingUser = await prisma.users.findFirst({
+        where: { 
+          username: {
+            equals: sanitizedUsername,
+            mode: 'insensitive' 
+          }
+        },
+      });
+      console.log("DEBUG UPDATE_ME -> Current User ID:", userId);
+      console.log("DEBUG UPDATE_ME -> Found Existing User:", existingUser ? { id: existingUser.id, username: existingUser.username } : "Not Found");
+
+      if (existingUser) {
+        if (existingUser.id !== userId) {
+          res.status(409).json({ 
+            success: false, 
+            error: "Username is already taken." 
           });
-          return;
+          return; 
         }
       }
     }
-    // 1. If user sends a new username, verify it's not taken
-    if (username) {
-      const existingUser = await prisma.users.findUnique({
-        where: { username },
-      });
-      if (existingUser && existingUser.id !== userId) {
-        res
-          .status(409)
-          .json({ success: false, error: "Username is already taken." });
-        return;
-      }
-    }
-
-    // 2. Dynamically build update object (only update provided fields)
     const updateData: any = {};
     if (bio !== undefined) updateData.bio = bio;
-    if (username !== undefined) updateData.username = username;
+    if (username !== undefined) updateData.username = username.trim(); // حفظ الاسم نضيف
     if (social_links !== undefined) updateData.social_links = social_links;
-    if (role_models !== undefined) updateData.role_models = role_models; // Array of names like ["Muhammad Ali", "Mike Tyson"]
+    if (role_models !== undefined) updateData.role_models = role_models;
+    if (role !== undefined) updateData.role = role; 
 
-    // 3. Execute DB update (include sport profile to match getMe response)
     const updatedUser = await prisma.users.update({
       where: { id: userId },
       data: updateData,
@@ -136,96 +177,121 @@ export const updateMe = async (
         },
       },
     });
-
-    // 4. Remove sensitive data
     const { password_hash, ...safeUserData } = updatedUser;
-
-    // 5. Send response to frontend
     res.status(200).json({
       success: true,
       message: "Profile updated successfully.",
       data: safeUserData,
     });
-  } catch (error: any) {
-    console.error("Update Me Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to update profile." });
+
+  } catch (error) {
+    next(error);
   }
 };
 
-export const uploadPhoto = async (
-  req: AuthRequest,
-  res: Response,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
+// export const getPublicProfile = async (
+//   req: AuthRequest,
+//   res: Response,
+// ): Promise<void> => {
+//   try {
+//     const targetUserId = req.params.id; // Target profile ID to view
+//     const requestingUserId = req.user?.sub as string; // ID of the requesting user
 
-    // دلوقتي نقدر نقرأ الملف بأمان من غير as any
-    const file = req.file;
+//     if (!targetUserId || (targetUserId as string).trim() === "") {
+//       res.status(400).json({
+//         success: false,
+//         error: "Validation error — user_id param is required.",
+//       });
+//       return;
+//     }
 
-    if (!file) {
-      // 🎯 مطابقة لرسالة الـ Sad Path
-      res
-        .status(400)
-        .json({ success: false, error: "Validation error — file required." });
-      return;
-    }
+//     const uuidRegex =
+//       /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+//     if (!uuidRegex.test(targetUserId as string)) {
+//       res
+//         .status(400)
+//         .json({ success: false, error: "Validation error — invalid UUID." });
+//       return;
+//     }
 
-    const photoUrl = file.path;
+//     const targetUser = await prisma.users.findUnique({
+//       where: { id: targetUserId as string }, 
+//       include: {
+//         user_sport_profiles: {
+//           where: { is_primary: true },
+//           include: { sports: true },
+//         },
+//       },
+//     });
 
-    const user = await prisma.users.findUnique({ where: { id: userId } });
-    if (user?.profile_photo) {
-      const publicIdMatch = user.profile_photo.match(/\/v\d+\/(.+?)\.\w+$/);
-      if (publicIdMatch && publicIdMatch[1])
-        await cloudinary.uploader.destroy(publicIdMatch[1]);
-    }
+//     if (!targetUser) {
+//       res.status(404).json({ success: false, error: "User not found." });
+//       return;
+//     }
 
-    const updatedUser = await prisma.users.update({
-      where: { id: userId },
-      data: { profile_photo: photoUrl },
-    });
+//     let is_following = false;
 
-    // 🎯 الرد بـ 201 ونفس شكل الـ JSON المتوقع في التيست
-    res.status(201).json({
-      success: true,
-      profile_photo_url: updatedUser.profile_photo,
-    });
-  } catch (error: any) {
-    console.error("Upload Photo Error:", error);
-    res.status(500).json({ success: false, error: "Failed to upload photo." });
-  }
-};
+//     if (requestingUserId && requestingUserId !== targetUserId) {
+//       const followRecord = await prisma.follows.findUnique({
+//         where: {
+//           follower_id_followee_id: {
+//             follower_id: requestingUserId,
+//             followee_id: targetUserId as string,
+//           },
+//         },
+//       });
+//       is_following = !!followRecord;
+//     }
+
+//     const { password_hash, email, date_of_birth, ...publicData } = targetUser;
+
+//     res.status(200).json({
+//       success: true,
+//       data: {
+//         ...publicData,
+//         is_following,
+//       },
+//     });
+//   } catch (error: any) {
+//     console.error("Get Public Profile Error:", error);
+//     res
+//       .status(500)
+//       .json({ success: false, error: "Failed to fetch user profile." });
+//   }
+// };
+
+//  i think it works in success format 
 export const getPublicProfile = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
-    const targetUserId = req.params.id; // Target profile ID to view
-    const requestingUserId = req.user?.sub as string; // ID of the requesting user
+    const targetUserId = req.query.user_id as string; 
+    const requestingUserId = req.user?.sub as string; 
 
-    // 🎯 1. التعديل الجديد: التأكد إن الـ ID مبعوت ومش فاضي
-    if (!targetUserId || (targetUserId as string).trim() === "") {
+    // 1. فحص وجود الـ parameter والرسالة المطلوبة بالملي
+    if (!targetUserId || targetUserId.trim() === "") {
       res.status(400).json({
         success: false,
-        error: "Validation error — user_id param is required.",
+        error: "Validation error — required param missing.",
       });
       return;
     }
 
-    // 🎯 2. التعديل الجديد: التأكد إن الـ ID بصيغة UUID سليمة
-    const uuidRegex =
-      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-    if (!uuidRegex.test(targetUserId as string)) {
-      res
-        .status(400)
-        .json({ success: false, error: "Validation error — invalid UUID." });
+    // 2. فحص الـ UUID
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!uuidRegex.test(targetUserId)) {
+      res.status(400).json({ 
+        success: false, 
+        error: "Validation error — invalid UUID." 
+      });
       return;
     }
 
-    // 3. Fetch profile data (الكود بتاعك السليم)
+    // 🎯 3. حل المشكلة الأولى: شيلنا الـ _count من الكوايري عشان الـ Schema تـ Compile بسلام، وهنحسب الـ Counts تحت
     const targetUser = await prisma.users.findUnique({
-      where: { id: targetUserId as string }, // شيلنا الـ 'as string' لأننا ضمنا إنه String فوق
+      where: { id: targetUserId }, 
       include: {
         user_sport_profiles: {
           where: { is_primary: true },
@@ -239,37 +305,47 @@ export const getPublicProfile = async (
       return;
     }
 
-    // 4. Check if current user is following this profile
+    // 🎯 4. حساب الـ Counts من جداول الـ Follows والـ Programs بشكل منفصل ومضمون 100%
+    const followersCount = await prisma.follows.count({ where: { followee_id: targetUserId } });
+    const followingCount = await prisma.follows.count({ where: { follower_id: targetUserId } });
+    
+    // حساب الـ is_following
     let is_following = false;
-
-    // مفيش داعي يعمل فحص لو اليوزر بيفتح بروفايل نفسه
     if (requestingUserId && requestingUserId !== targetUserId) {
       const followRecord = await prisma.follows.findUnique({
         where: {
           follower_id_followee_id: {
             follower_id: requestingUserId,
-            followee_id: targetUserId as string,
+            followee_id: targetUserId,
           },
         },
       });
       is_following = !!followRecord;
     }
 
-    // 5. Remove sensitive data for privacy
-    const { password_hash, email, date_of_birth, ...publicData } = targetUser;
+    // 🎯 5. حل المشكلة الثانية والثالثة: عملنا Casting للـ targetUser كـ any عشان الـ TS يقرا الـ user_sport_profiles وميجيبش النوع Any الضمني
+    const userAny = targetUser as any;
+    const sportProfiles = userAny.user_sport_profiles || [];
 
-    // 6. Respond with data and follow status
+    // تنظيف الـ sport profiles من الـ user_id المكرر وتحديد نوع الـ parameter كـ any لمنع الـ TS error
+    const cleanedSportProfiles = sportProfiles.map(({ user_id, ...rest }: any) => rest);
+
+    // تجهيز البيانات الأساسية بدون الباسورد والإيميل وتاريخ الميلاد
+    const { password_hash, email, date_of_birth, ...publicData } = userAny;
+
     res.status(200).json({
       success: true,
       data: {
         ...publicData,
+        user_sport_profiles: cleanedSportProfiles,
+        followers_count: followersCount,
+        following_count: followingCount,
+        programs_completed: 0, // جاهزة للربط مع جدول البرامج المكتملة مستقبلاً
         is_following,
       },
     });
   } catch (error: any) {
     console.error("Get Public Profile Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch user profile." });
+    res.status(500).json({ success: false, error: "Failed to fetch user profile." });
   }
 };

@@ -9,19 +9,21 @@ import {
     getMyEnrollments
 } from '../controllers/athlete.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
+import { createSnapshotValidation, createSportProfileValidation, updateSportProfileValidation } from '../validators/athlete.validator';
+import { validate } from '../middlewares/validation.middleware';
 
 const router = Router();
 
 // ==========================================
-// 1. Sport Profiles
+// 1. Sport Profiles // done 
 // ==========================================
-router.post('/sport-profile', authenticateToken, createSportProfile);
-router.patch('/sport-profile', authenticateToken, updateSportProfile);
+router.post('/sport-profile', authenticateToken,createSportProfileValidation,validate, createSportProfile);
+router.patch('/sport-profile', authenticateToken,updateSportProfileValidation,validate, updateSportProfile);
 
 // ==========================================
 // 2. Physical Snapshots
 // ==========================================
-router.post('/snapshots', authenticateToken, createSnapshot);
+router.post('/snapshots', authenticateToken,createSnapshotValidation,validate, createSnapshot);
 router.get('/snapshots', authenticateToken, getSnapshots);
 
 // ==========================================

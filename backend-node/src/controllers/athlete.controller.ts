@@ -1,4 +1,4 @@
-import { Response } from "express";
+import { Response , NextFunction} from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { prisma } from "../config/prisma";
 import {
@@ -40,7 +40,7 @@ const getAgeGroupId = (dateOfBirth: Date | null | undefined): number => {
     console.warn(
       "Invalid or missing dateOfBirth. Defaulting to Age Group 2 (18-35).",
     );
-    return 2; // القيمة الافتراضية الأكثر أماناً وشيوعاً لحين تعديل البروفايل
+    return 2; 
   }
 
   const age = new Date().getFullYear() - dateOfBirth.getFullYear(); // modified function
@@ -54,7 +54,7 @@ const getAgeGroupId = (dateOfBirth: Date | null | undefined): number => {
 const getAdjacentWeightClasses = (
   weightClass: weight_class,
 ): weight_class[] => {
-  // Guard Clause: حماية لو القيمة المبعوتة مش موجودة في الـ Enum
+  
   if (!weightClass) return [];
 
   const classes: weight_class[] = [
@@ -91,7 +91,6 @@ const getPercentileWithFallback = async (
   userWeight: weight_class,
   userAgeGroupId: number,
 ): Promise<{ percentile: number; fallbackLevel: number }> => {
-  // معادلة الحساب الاحتياطية المطلقة في حال كراش ال (داتا بيز) بالكامل أو عدم وجود بيانات نهائياً
   const getAbsoluteFallback = (val: number) =>
     Math.min(99, Math.max(1, Math.floor(val / 2)));
 
@@ -136,7 +135,7 @@ const getPercentileWithFallback = async (
 
           const z = calculateZScore(rawValue, mean, stdDev, higherIsBetter);
 
-          // حماية للتأكد إن الـ Z-Score رقم حقيقي مش NaN أو Infinity
+
           if (isNaN(z) || !isFinite(z)) {
             console.warn(
               `Invalid Z-Score calculated: ${z} for testId: ${testId}.`,
@@ -157,7 +156,7 @@ const getPercentileWithFallback = async (
       }
     }
 
-    // لو لف على الـ 5 خطوات وملقاش داتا مطابقة في الـ DB
+
     return { percentile: getAbsoluteFallback(rawValue), fallbackLevel: 4 };
   } catch (globalError) {
     // حماية عليا لو الكود الخارجي حصل فيه أي مشكلة غير متوقعة
@@ -186,345 +185,205 @@ const getTestName = async (testId: number): Promise<string> => {
 // ==========================================
 // 3.1 & 3.2: Sport Profiles
 // ==========================================
-
+// Validates
 export const createSportProfile = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-
-    // حماية: التأكد من أن التوكن تم التحقق منه والمستخدم موجود
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
-
-    const { sport_id = 1, level, weight_class, is_primary = true } = req.body;
-    // التحقق من وجود الحقول الإجبارية
-    if (!level || !weight_class) {
-      res.status(400).json({
-        success: false,
-        error: "Level and weight class are required.",
-      });
-      return;
-    }
-
-    //  حماية الـ Data Type لـ sport_id ومنع الـ NaN
+    const { sport_id, level, weight_class, is_primary } = req.body;
     const parsedSportId = Number(sport_id);
-    if (isNaN(parsedSportId) || parsedSportId <= 0) {
-      res.status(400).json({
-        success: false,
-        error: "Invalid sport_id. It must be a positive number.",
-      });
-      return;
-    }
 
-    //التحقق من صحة ال Enums  (اختياري ولكن يمنع كراش الـ DB 500)
-    // يمكنك تفعيل هذا الجزء إذا كنت تريد تحجيم المدخلات من ال Controller  مباشرة
-    const validLevels = ["amateur", "professional","novice"]; // ضيف الليفلز اللي عندك في ال DB
-    if (!validLevels.includes(level.toLowerCase())) {
-      res.status(400).json({
+    const sportExists = await prisma.sports.findUnique({
+      where: { id: parsedSportId }
+    });
+
+    if (!sportExists) {
+      res.status(404).json({
         success: false,
-        error: `Invalid level. Allowed values are: ${validLevels.join(", ")}`,
+        error: "Sport not found."
       });
       return;
     }
 
     const existingProfile = await prisma.user_sport_profiles.findFirst({
-      where: { user_id: userId, sport_id: Number(sport_id) },
+      where: { 
+        user_id: userId, 
+        sport_id: parsedSportId 
+      },
     });
 
     if (existingProfile) {
       res.status(409).json({
         success: false,
-        error:
-          "Sport profile already exists for this sport. Use PATCH to update.",
+        error: "Conflict — sport profile already exists. Use PATCH to update.",
       });
       return;
     }
 
-    // const newProfile = await prisma.user_sport_profiles.create({
-    //     data: { user_id: userId, sport_id: Number(sport_id), level, weight_class, is_primary }
-    // });
+
     const newProfile = await prisma.user_sport_profiles.create({
       data: {
         user_id: userId,
         sport_id: parsedSportId,
-        level: level.toLowerCase().trim(), // تنظيف البيانات قبل الحفظ
+        level: level.toLowerCase().trim(),
         weight_class: weight_class.toLowerCase().trim(),
-        is_primary: Boolean(is_primary),
+        is_primary: is_primary !== undefined ? Boolean(is_primary) : true,
       },
     });
 
-    res.status(201).json({
-      success: true,
-      message: "Sport profile created successfully!",
-      data: newProfile,
-    });
+    res.status(201).json(newProfile);
   } catch (error: any) {
     console.error("Create Sport Profile Error:", error);
-
-    // حماية إضافية: لو الـ بريزما ضربت بسبب الـ Enums أو Constraints تانية ممسكناهاش فوق
-    if (error.code === "P2002" || error.code === "P2003") {
-      res.status(400).json({
-        success: false,
-        error: "Database constraint violation. Check your inputs.",
-      });
-      return;
-    }
-
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to create sport profile." });
+    next(error); 
   }
 };
-
-
+// validated
 export const updateSportProfile = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
-
     const { level, weight_class } = req.body;
 
-    //  حماية: منع إرسال Request فارغ بدون أي حقول للتعديل
-    if (!level && !weight_class) {
-      res.status(400).json({
-        success: false,
-        error:
-          "Bad Request. Please provide at least one field to update (level or weight_class).",
-      });
-      return;
-    }
-
-    //  التحقق من صحة الـ Enums وتجنب كراش الـ DB (اختياري وحسب الـ DB Enums عندك)
-    if (level) {
-      const validLevels = ["amateur", "professional","novice"];
-      if (!validLevels.includes(level.toLowerCase().trim())) {
-        res.status(400).json({
-          success: false,
-          error: `Invalid level. Allowed values are: ${validLevels.join(", ")}`,
-        });
-        return;
-      }
-    }
-
+    
     const existingProfile = await prisma.user_sport_profiles.findFirst({
       where: { user_id: userId, is_primary: true },
     });
 
+    
     if (!existingProfile) {
       res.status(404).json({
         success: false,
-        error: "Sport profile not found. Please create one first.",
+        error: "Not found — create profile first.",
       });
       return;
     }
 
-    //  تحديث البيانات بشكل آمن مع تنظيف النصوص (Sanitization)
+    
     const updateData: any = {};
     if (level) updateData.level = level.toLowerCase().trim();
-    if (weight_class)
-      updateData.weight_class = weight_class.toLowerCase().trim();
+    if (weight_class) updateData.weight_class = weight_class.toLowerCase().trim();
 
-    const updatedProfile = await prisma.user_sport_profiles.update({
+
+    await prisma.user_sport_profiles.update({
       where: { id: existingProfile.id },
-      data: { ...(level && { level }), ...(weight_class && { weight_class }) },
+      data: updateData,
     });
 
+    
+    let successMessage = "Both fields updated.";
+    if (level && !weight_class) {
+      successMessage = "Level updated. weight_class unchanged.";
+    } else if (!level && weight_class) {
+      successMessage = "Weight class updated. level unchanged.";
+    }
+
+    
     res.status(200).json({
       success: true,
-      message: "Sport profile updated successfully!",
-      data: updatedProfile,
+      message: successMessage
     });
+
   } catch (error: any) {
     console.error("Update Sport Profile Error:", error);
-    // حماية لو حصل مشكلة قيود في الـ DB
-    if (error.code === "P2002" || error.code === "P2003") {
-      res.status(400).json({
-        success: false,
-        error: "Database constraint violation. Invalid input data.",
-      });
-      return;
-    }
-    res.status(500).json({
-      success: false,
-      error: "Failed to update sport profile due to an internal server error.",
-    });
+    next(error); 
   }
 };
+
+// validated
 
 export const createSnapshot = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
-
-    const {
-      sport_id = 1,
-      snapshot_type = "manual_update",
-      program_enrollment_id,
-      notes,
-      test_values,
-    } = req.body;
-
-    if (
-      !test_values ||
-      !Array.isArray(test_values) ||
-      test_values.length === 0
-    ) {
-      res.status(400).json({
-        success: false,
-        error: "test_values array is required and cannot be empty",
-      });
-      return;
-    }
-
+    const { sport_id, snapshot_type, program_enrollment_id, notes, test_values } = req.body;
     const parsedSportId = Number(sport_id);
-    if (isNaN(parsedSportId) || parsedSportId <= 0) {
-      res.status(400).json({
-        success: false,
-        error: "Invalid sport_id. It must be a positive number.",
-      });
-      return;
-    }
 
-    const validSnapshotTypes = [
-      "manual_update",
-      "program_baseline",
-      "program_posttest",
-    ];
-    if (!validSnapshotTypes.includes(snapshot_type)) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid snapshot_type. Allowed: ${validSnapshotTypes.join(", ")}`,
-      });
-      return;
-    }
-
-    if (
-      (snapshot_type === "program_baseline" ||
-        snapshot_type === "program_posttest") &&
-      !program_enrollment_id
-    ) {
-      res.status(400).json({
-        success: false,
-        error: "program_enrollment_id is required for this snapshot type.",
-      });
-      return;
-    }
-
-    const result = await prisma.$transaction(async (tx) => {
-      // إزالة أي IDs مكررة مبعوتة بالخطأ في نفس الـ Request لضمان دقة الحساب
-      const rawTestIds = test_values
-        .map((t: any) => Number(t.attribute_test_id))
-        .filter((id) => !isNaN(id));
+    
+    const finalResult = await prisma.$transaction(async (tx) => {
+      
+      const rawTestIds: number[] = test_values.map((t: any) => Number(t.attribute_test_id));
       const uniqueTestIds = [...new Set(rawTestIds)];
 
       const testsInfo = await tx.attribute_tests.findMany({
         where: { id: { in: uniqueTestIds } },
       });
 
-      // التحقق من أن جميع الـ IDs الفريدة موجودة فعلاً في الداتابيز
+      
       if (testsInfo.length !== uniqueTestIds.length) {
         throw new Error("INVALID_TEST_IDS");
       }
 
-      // إنشاء السجل الرئيسي
+
       const snapshot = await tx.physical_snapshots.create({
         data: {
           user_id: userId,
           sport_id: parsedSportId,
           snapshot_type,
-          program_enrollments_id: program_enrollment_id
-            ? Number(program_enrollment_id)
-            : null,
+          program_enrollment_id: program_enrollment_id ? String(program_enrollment_id) : null,
           notes,
         },
       });
 
-      // تجهيز البيانات للـ Bulk Insert مع حماية الـ Decimal Types
+
       const dataToInsert = test_values.map((test: any) => {
-        const info = testsInfo.find(
-          (ti) => ti.id === Number(test.attribute_test_id),
-        );
-
-        if (isNaN(Number(test.value))) {
-          throw new Error("INVALID_TEST_VALUE");
-        }
-
+        const info = testsInfo.find((ti) => ti.id === Number(test.attribute_test_id));
         return {
           snapshot_id: snapshot.id,
           attribute_test_id: Number(test.attribute_test_id),
-          // 💡 الحل السحري: بنمرر القيمة كـ string لـ Prisma.Decimal لو الجدول Decimal، أو كـ number لو الجدول float
           value: new Prisma.Decimal(test.value),
           unit: info?.unit || "unknown",
         };
       });
 
       await tx.snapshot_test_values.createMany({ data: dataToInsert });
-      return snapshot;
+
+      const resolvedTestValues = test_values.map((test: any) => {
+        const info = testsInfo.find((ti) => ti.id === Number(test.attribute_test_id));
+        return {
+          attribute_test_id: Number(test.attribute_test_id),
+          test_name: info?.test_name || "unknown", 
+          value: Number(test.value),
+          unit: info?.unit || "unknown"
+        };
+      });
+
+      return {
+        id: snapshot.id,
+        user_id: snapshot.user_id,
+        sport_id: snapshot.sport_id,
+        snapshot_type: snapshot.snapshot_type,
+        created_at: snapshot.created_at,
+        test_values: resolvedTestValues
+      };
     });
 
-    res.status(201).json({
-      success: true,
-      message: "Snapshot saved successfully!",
-      snapshot_id: result.id,
-    });
+     res.status(201).json(finalResult);
+
   } catch (error: any) {
-    console.error("Create Snapshot Error Detailed:", error); // 👈 هيرسيلك تفاصيل الخطأ كاملة في الـ Terminal
+    console.error("Create Snapshot Error:", error);
 
-    if (error.message === "INVALID_TEST_IDS") {
+     if (error.message === "INVALID_TEST_IDS") {
       res.status(404).json({
         success: false,
-        error: "One or more provided attribute_test_ids do not exist.",
+        error: "One or more provided attribute_test_ids do not exist."
       });
       return;
     }
 
-    if (error.message === "INVALID_TEST_VALUE") {
-      res
-        .status(400)
-        .json({ success: false, error: "Test values must be valid numbers." });
-      return;
-    }
-
-    if (error.code === "P2002" || error.code === "P2003") {
-      res.status(400).json({
-        success: false,
-        error: "Database constraint violation. Check your referenced IDs.",
-      });
-      return;
-    }
-
-    res.status(500).json({
-      success: false,
-      error: "Failed to save snapshot due to an internal server error.",
-      meta_error: error.message, 
-    });
+    next(error); 
   }
 };
 
+// IN Progress
 export const getSnapshots = async (
   req: AuthRequest,
   res: Response,

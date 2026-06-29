@@ -11,7 +11,9 @@ import socialRoutes from './routes/social.routes';
 import searchRoutes from './routes/search.routes';
 import leaderboardsRoutes from './routes/leaderboards.routes';
 import workoutsRoutes from './routes/workouts.routes';
+import { errorHandler } from './middlewares/errorHandler.middleware';
 const app: Application = express();
+
 
 app.use(express.json());
 app.use(cors());
@@ -28,7 +30,10 @@ app.use('/api/social', socialRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/leaderboards', leaderboardsRoutes);
 app.use('/api/workouts', workoutsRoutes);
+app.use(errorHandler);
 app.get('/', (req, res) => {
     res.json({ message: 'Welcome to NeoFit API! 🚀' });
 });
+
+
 export default app;

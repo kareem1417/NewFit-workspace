@@ -1,6 +1,5 @@
 import app from './app';
 import { prisma } from './config/prisma';
-
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
@@ -19,5 +18,6 @@ async function startServer() {
         process.exit(1);
     }
 }
+
 
 startServer();
