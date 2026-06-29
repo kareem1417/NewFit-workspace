@@ -9,7 +9,7 @@ import {
     getMyEnrollments
 } from '../controllers/athlete.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
-import { createSnapshotValidation, createSportProfileValidation, updateSportProfileValidation } from '../validators/athlete.validator';
+import { createSnapshotValidation, createSportProfileValidation, getMyEnrollmentsValidation, getProgressValidation, getRadarDataValidation, getSnapshotsValidation, updateSportProfileValidation } from '../validators/athlete.validator';
 import { validate } from '../middlewares/validation.middleware';
 
 const router = Router();
@@ -21,20 +21,21 @@ router.post('/sport-profile', authenticateToken,createSportProfileValidation,val
 router.patch('/sport-profile', authenticateToken,updateSportProfileValidation,validate, updateSportProfile);
 
 // ==========================================
-// 2. Physical Snapshots
+// 2. Physical Snapshots // done 
 // ==========================================
 router.post('/snapshots', authenticateToken,createSnapshotValidation,validate, createSnapshot);
-router.get('/snapshots', authenticateToken, getSnapshots);
+router.get('/snapshots', authenticateToken,getSnapshotsValidation,validate, getSnapshots);
 
 // ==========================================
 // 3. Analytics & Progress Tracking
 // ==========================================
-router.get('/radar', authenticateToken, getRadarData);
-router.get('/progress/:attributeTestId', authenticateToken, getProgress);
+router.get('/radar', authenticateToken,getRadarDataValidation,validate, getRadarData);
+// router.get('/progress/:attributeTestId', authenticateToken,getProgressValidation,validate, getProgress);
+router.get('/progress', authenticateToken, getProgressValidation, getProgress);
 
 // ==========================================
 // 4. Program Enrollments
 // ==========================================
-router.get('/enrollments', authenticateToken, getMyEnrollments);
+router.get('/enrollments', authenticateToken,getMyEnrollmentsValidation,validate, getMyEnrollments);
 
 export default router;

@@ -383,64 +383,26 @@ export const createSnapshot = async (
   }
 };
 
-// IN Progress
+// done 
+
 export const getSnapshots = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    //
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
+    
+    // استدعاء البيانات النظيفة من الـ Validator
+    const { limit, offset, typeStr } = res.locals.cleanQuery;
 
-    let limit = parseInt(req.query.limit as string);
-    if (isNaN(limit) || limit <= 0) {
-      limit = 20; 
-    } else if (limit > 100) {
-      limit = 100; 
-    }
-
-    let offset = parseInt(req.query.offset as string);
-    if (isNaN(offset) || offset < 0) {
-      offset = 0; 
-    }
-
-    // Force TypeScript to accept Query type code kareem el2adeeem
-    // const type = req.query.type as unknown as snapshot_type | undefined;
-
-    // const whereClause: any = { user_id: userId };
-    // if (type) whereClause.snapshot_type = type;
-
-    const typeStr = req.query.type as string | undefined;
-    const validSnapshotTypes = [
-      "manual_update",
-      "program_baseline",
-      "program_posttest",
-    ];
-
-    if (typeStr && !validSnapshotTypes.includes(typeStr)) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid snapshot type. Allowed values are: ${validSnapshotTypes.join(", ")}`,
-      });
-      return;
-    }
-
-    const type = typeStr as snapshot_type | undefined;
-
-    // بناء الـ Filter بشكل ديناميكي وآمن
+    // بناء الـ Where Clause بشكل ديناميكي وآمن للـ Prisma
     const whereClause: any = { user_id: userId };
-    if (type) whereClause.snapshot_type = type;
+    if (typeStr) {
+      whereClause.snapshot_type = typeStr;
+    }
 
-    // Separated to prevent TypeScript issues
-    const totalCount = await prisma.physical_snapshots.count({
-      where: whereClause,
-    });
+    // سحب البيانات مرتبة تنازلياً بالأحدث (DESC)
     const snapshots = await prisma.physical_snapshots.findMany({
       where: whereClause,
       take: limit,
@@ -448,34 +410,43 @@ export const getSnapshots = async (
       orderBy: { created_at: "desc" },
       include: {
         snapshot_test_values: {
-          include: { attribute_tests: { select: { test_name: true } } },
+          include: { 
+            attribute_tests: { 
+              select: { test_name: true } 
+            } 
+          },
         },
       },
     });
 
+    // لو مفيش snapshots أو الـ offset مبروح لبعيد، هيرجع Array فاضية [] أوتوماتيك مع status 200
+    if (!snapshots || snapshots.length === 0) {
+      res.status(200).json([]);
+      return;
+    }
+
+    // عمل Format وتجميع الـ test_values لكل snapshot بالملي زي طلب الـ Sheet
     const formattedSnapshots = snapshots.map((snap) => ({
       id: snap.id,
+      user_id: snap.user_id,
+      sport_id: snap.sport_id,
       snapshot_type: snap.snapshot_type,
       created_at: snap.created_at,
-      notes: snap.notes,
+      notes: snap.notes || null,
       test_values: snap.snapshot_test_values.map((tv) => ({
         attribute_test_id: tv.attribute_test_id,
-        test_name: tv.attribute_tests?.test_name,
-        value: tv.value,
+        test_name: tv.attribute_tests?.test_name || "unknown",
+        value: Number(tv.value), // تحويل الـ Decimal لـ number صريح لراحة الـ JSON
         unit: tv.unit,
       })),
     }));
 
-    res.status(200).json({
-      success: true,
-      data: formattedSnapshots,
-      meta: { total: totalCount, limit, offset },
-    });
+    // إرجاع الـ Array مباشرة لمطابقة الـ Assertion بالملي
+    res.status(200).json(formattedSnapshots);
+
   } catch (error: any) {
     console.error("Get Snapshots Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch snapshots." });
+    next(error); // التمرير للـ Global Error Handler
   }
 };
 
@@ -483,58 +454,17 @@ export const getSnapshots = async (
 // 3.5: Unified Radar & Punch Power Data (CR-14 & CR-15 fixed)
 // ==========================================
 
+// Validated
+
 export const getRadarData = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
 
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
-
-    const levelStr = req.query.cohort_level as string | undefined;
-    const weightStr = req.query.cohort_weight as string | undefined;
-
-    const validLevels = ["amateur", "professional","novice"]; 
-    const validWeights = [
-      "flyweight",
-      "bantamweight",
-      "featherweight",
-      "lightweight",
-      "light_welterweight",
-      "welterweight",
-      "light_middleweight",
-      "middleweight",
-      "super_middleweight",
-      "light_heavyweight",
-      "cruiserweight",
-      "heavyweight",
-    ];
-
-    if (levelStr && !validLevels.includes(levelStr.toLowerCase().trim())) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid cohort_level. Allowed values: ${validLevels.join(", ")}`,
-      });
-      return;
-    }
-
-    if (weightStr && !validWeights.includes(weightStr.toLowerCase().trim())) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid cohort_weight. Allowed values: ${validWeights.join(", ")}`,
-      });
-      return;
-    }
-
-    const cohortLevel = levelStr as competitive_level | undefined;
-    const cohortWeight = weightStr as weight_class | undefined;
-
+    // 1. جلب بيانات المستخدم والـ Sport Profile الأساسي له
     const user = await prisma.users.findUnique({
       where: { id: userId },
       select: {
@@ -549,15 +479,21 @@ export const getRadarData = async (
     }
 
     const profile = user.user_sport_profiles[0];
+    // 🎯 مصيدة: لو الـ Athlete ملوش بروفايل رياضي مسجل (يرد 404 حسب الـ Sheet)
     if (!profile) {
-      res.status(404).json({ success: false, error: "Profile not found." });
+      res.status(404).json({ 
+        success: false, 
+        error: "Sport profile not found." 
+      });
       return;
     }
 
+    // تحديد الـ Cohort المستخدم (إما المبعوث كـ Override أو الأساسي من البروفايل)
     const ageGroupId = getAgeGroupId(user.date_of_birth);
-    const targetLevel = cohortLevel || profile.level;
-    const targetWeight = cohortWeight || profile.weight_class;
+    const targetLevel = res.locals.overrideLevel || profile.level;
+    const targetWeight = res.locals.overrideWeight || profile.weight_class;
 
+    // 2. جلب أحدث Snapshot في السيستم للاعب
     const latestSnapshot = await prisma.physical_snapshots.findFirst({
       where: { user_id: userId },
       orderBy: { created_at: "desc" },
@@ -565,33 +501,29 @@ export const getRadarData = async (
         snapshot_test_values: {
           include: {
             attribute_tests: {
-              include: { sport_attributes: true }, // Fixed typo here
+              include: { sport_attributes: true },
             },
           },
         },
       },
     });
 
-    // if (!latestSnapshot) {
-    //   res.status(404).json({ success: false, error: "No snapshot found." });
-    //   return;
-    // }
-
+    // 🎯 مصيدة: لو مفيش أي Snapshots متسجلة للاعب (يرد 404 حسب الـ Sheet)
     if (!latestSnapshot || latestSnapshot.snapshot_test_values.length === 0) {
       res.status(404).json({
         success: false,
-        error: "No physical snapshot data found for this athlete.",
+        error: "No snapshot data found."
       });
       return;
     }
 
-    const attributeMap = new Map<
-      number,
-      { name: string; tests: any[]; totalWeight: number }
-    >();
+    // تجميع وترتيب الـ Test Values على الـ Attributes المرجعية لها
+    const attributeMap = new Map<number, { name: string; tests: any[]; totalWeight: number }>();
+    
     for (const testVal of latestSnapshot.snapshot_test_values) {
       const attr = testVal.attribute_tests?.sport_attributes;
       if (!attr) continue;
+      
       const attrId = attr.id;
       if (!attributeMap.has(attrId)) {
         attributeMap.set(attrId, {
@@ -601,8 +533,6 @@ export const getRadarData = async (
         });
       }
       const entry = attributeMap.get(attrId)!;
-
-      // Modification: Read weight directly from the table
       const weight = Number(testVal.attribute_tests?.weight || 1);
 
       entry.tests.push({
@@ -614,13 +544,11 @@ export const getRadarData = async (
       });
       entry.totalWeight += weight;
     }
-    //✅
-    const radar_axes: any[] = [];
-    let foundationPct = 0,
-      acceleratorPct = 0,
-      transferPct = 0;
 
-    //✅
+    const radar_axes: any[] = [];
+    let foundationPct = 0, acceleratorPct = 0, transferPct = 0;
+
+    // الحسابات الموزونة والـ Percentiles لكل Attribute والـ Fallbacks بتاعته
     for (const [attrId, attrData] of attributeMap.entries()) {
       let weightedPercentileSum = 0;
       let highestFallback = 0;
@@ -636,49 +564,32 @@ export const getRadarData = async (
             ageGroupId,
           );
           const testName = await getTestName(test.testId);
-
-          // بنرجع كائن جديد مدمج فيه البيانات القديمة والجديدة
           return { ...test, ...percentileData, testName };
         }),
       );
+
       for (const test of processedTests) {
-        // حساب المجموع الموزون للـ Percentiles
         weightedPercentileSum += test.percentile * test.weight;
 
-        // تحديد أعلى مستوى fallback وصلنا له في الـ Attribute ده
         if (test.fallbackLevel > highestFallback) {
           highestFallback = test.fallbackLevel;
         }
 
-        // تجميع الـ Percentiles الخاصة بحسابات الـ Punch Power
-        if (test.testName === "Trap Bar Deadlift") {
-          foundationPct = test.percentile;
-        }
-        if (
-          test.testName === "Power Clean" ||
-          test.testName === "Box Jump Height"
-        ) {
-          acceleratorPct = test.percentile;
-        }
-        if (test.testName === "Medicine Ball Rotational Throw") {
-          transferPct = test.percentile;
-        }
+        // عزل الاختبارات المطلوبة لحساب الـ Punch Power
+        if (test.testName === "Trap Bar Deadlift") foundationPct = test.percentile;
+        if (test.testName === "Power Clean" || test.testName === "Box Jump Height") acceleratorPct = test.percentile;
+        if (test.testName === "Medicine Ball Rotational Throw") transferPct = test.percentile;
       }
 
-      // ✅
-      const finalPercentile =
-        attrData.totalWeight > 0
-          ? weightedPercentileSum / attrData.totalWeight
-          : 0;
+      const finalPercentile = attrData.totalWeight > 0 ? weightedPercentileSum / attrData.totalWeight : 0;
 
-      //✅
       radar_axes.push({
         attribute_name: attrData.name,
         percentile: Math.round(finalPercentile),
         fallback_level: highestFallback,
       });
     }
-    //✅
+
     const punch_power = {
       score: calculatePunchPower(foundationPct, acceleratorPct, transferPct),
       foundation: { percentile: foundationPct },
@@ -686,60 +597,38 @@ export const getRadarData = async (
       transfer: { percentile: transferPct },
     };
 
+    // 🎯 الـ Response النهائي: طالع من غير زحمة الـ success والـ data لمطابقة الـ Assertion بالملي!
     res.status(200).json({
-      success: true,
-      data: {
-        radar_axes,
-        punch_power,
-        cohort_used: {
-          weight_class: targetWeight,
-          level: targetLevel,
-          age_group:
-            ageGroupId === 2 ? "18-35" : ageGroupId === 1 ? "Under 18" : "35+",
-        },
-        snapshot_date: latestSnapshot.created_at,
+      radar_axes,
+      punch_power,
+      cohort_used: {
+        weight_class: targetWeight,
+        level: targetLevel,
+        age_group: ageGroupId === 2 ? "18-35" : ageGroupId === 1 ? "Under 18" : "35+",
       },
+      snapshot_date: latestSnapshot.created_at,
     });
+
   } catch (error: any) {
     console.error("Get Radar Data Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to generate radar data" });
+    next(error); // التمرير للـ Global Error Handler
   }
 };
 
 // ==========================================
 // 3.6: Progress Tracking (CR-16 fixed)
 // ==========================================
-
+//validated
 export const getProgress = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
+    const attributeTestId = res.locals.attributeTestId;
 
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
-
-    const attributeTestId = parseInt(req.params.attributeTestId as string);
-
-    // if (isNaN(attributeTestId)) {
-    //   res.status(400).json({ success: false, error: "Invalid test ID." });
-    //   return;
-    // }
-    if (isNaN(attributeTestId) || attributeTestId <= 0) {
-      res.status(400).json({
-        success: false,
-        error: "Invalid test ID. It must be a positive number.",
-      });
-      return;
-    }
-
+    // 1. جلب بيانات الاختبار والـ User والـ Profile بالتوازي لسرعة الأداء
     const [testInfo, user, profile] = await Promise.all([
       prisma.attribute_tests.findUnique({ where: { id: attributeTestId } }),
       prisma.users.findUnique({
@@ -751,30 +640,19 @@ export const getProgress = async (
       }),
     ]);
 
-    // if (!testInfo || !profile || !user) {
-    //   res.status(404).json({ success: false, error: "Data not found." });
-    //   return;
-    // }
-
-    // one by one
+    // 🎯 حالة الـ Sad Path: الاختبار مش موجود في الداتا بيز (ترد 404)
     if (!testInfo) {
       res.status(404).json({
         success: false,
-        error: `Attribute test with ID ${attributeTestId} not found.`,
+        error: "attribute_test not found." // مطابقة للـ Assertion في الـ Sheet
       });
       return;
     }
 
-    if (!user) {
-      res.status(404).json({ success: false, error: "User record not found." });
-      return;
-    }
-
-    if (!profile) {
-      res.status(404).json({
-        success: false,
-        error:
-          "Sport profile not found. Please create a primary profile first.",
+    if (!user || !profile) {
+      res.status(404).json({ 
+        success: false, 
+        error: "Sport profile or user record not found." 
       });
       return;
     }
@@ -782,10 +660,9 @@ export const getProgress = async (
     const ageGroupId = getAgeGroupId(user.date_of_birth);
     const userLevel = profile.level;
     const userWeight = profile.weight_class;
-
-    // Modification: Handled null by adding a default value
     const higherIsBetter = testInfo.higher_is_better ?? true;
 
+    // 2. جلب جميع الـ Snapshots اللي فيها الـ Test ده للاعب (مرتبة تصاعدياً بالأقدم ASC)
     const history = await prisma.physical_snapshots.findMany({
       where: {
         user_id: userId,
@@ -800,27 +677,23 @@ export const getProgress = async (
       },
     });
 
-    // لو مفيش أي تاريخ مسجل للاختبار ده
+    // 🎯 حالة الـ Sad Path: الاختبار موجود بس اللاعب منزلوش أي داتا (ترد 200 مع Array فاضية)
     if (history.length === 0) {
       res.status(200).json({
-        success: true,
-        message: "No progress history found for this test yet.",
-        data: {
-          test_name: testInfo.test_name,
-          unit: testInfo.unit,
-          higher_is_better: higherIsBetter,
-          data_points: [],
-        },
+        test_name: testInfo.test_name,
+        unit: testInfo.unit,
+        higher_is_better: higherIsBetter,
+        data_points: [], // الـ Sheet طالبة يرجع الـ Object صريح وجواه مصفوفة فاضية
       });
       return;
     }
 
+    // 3. بناء الـ Data Points وحساب الـ Percentiles بشكل ديناميكي لكل سجل
     const data_points = await Promise.all(
       history.map(async (snap) => {
         const testValueRecord = snap.snapshot_test_values[0];
-        // const rawValue = Number(snap.snapshot_test_values[0]?.value || 0);
-        // حماية ضد السجلات المشوهة في قاعدة البيانات
         const rawValue = testValueRecord ? Number(testValueRecord.value) : 0;
+        
         const { percentile } = await getPercentileWithFallback(
           attributeTestId,
           rawValue,
@@ -829,29 +702,27 @@ export const getProgress = async (
           userWeight,
           ageGroupId,
         );
+
         return {
           date: snap.created_at,
           raw_value: rawValue,
-          snapshot_type: snap.snapshot_type,
           percentile: Math.round(percentile),
+          snapshot_type: snap.snapshot_type,
         };
       }),
     );
 
+    // 🎯 الـ Response النهائي: الـ Object في الـ Root مباشرة لمطابقة الـ Assertion بالملي!
     res.status(200).json({
-      success: true,
-      data: {
-        test_name: testInfo.test_name,
-        unit: testInfo.unit,
-        higher_is_better: higherIsBetter,
-        data_points,
-      },
+      test_name: testInfo.test_name,
+      unit: testInfo.unit,
+      higher_is_better: higherIsBetter,
+      data_points,
     });
+
   } catch (error: any) {
     console.error("Get Progress Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch progress." });
+    next(error); // التمرير للـ Global Error Handler المركزي
   }
 };
 
@@ -859,48 +730,112 @@ export const getProgress = async (
 // 3.7: Enrollments
 // ==========================================
 
+// export const getMyEnrollments = async (
+//   req: AuthRequest,
+//   res: Response,
+// ): Promise<void> => {
+//   try {
+//     const userId = req.user?.sub as string;
+
+//     // 1. حماية: التأكد من وجود الـ User Context
+//     if (!userId) {
+//       res
+//         .status(401)
+//         .json({ success: false, error: "Unauthorized. User context missing." });
+//       return;
+//     }
+//     // //
+//     // const status = req.query.status as enrollment_status | undefined;
+//     // //
+//     // const whereClause: any = { user_id: userId };
+//     // if (status) whereClause.status = status;
+
+//     // 2. تأمين الـ Query Params لمنع كراش الـ Enum في قاعدة البيانات
+//     const statusStr = req.query.status as string | undefined;
+//     const validStatuses = ["active", "completed", "dropped"]; // ضيف الـ Enums الفعلية من الـ DB عندك
+
+//     if (statusStr && !validStatuses.includes(statusStr.toLowerCase().trim())) {
+//       res.status(400).json({
+//         success: false,
+//         error: `Invalid status. Allowed values are: ${validStatuses.join(", ")}`,
+//       });
+//       return;
+//     }
+
+//     const status = statusStr as enrollment_status | undefined;
+
+//     // بناء الـ Filter بشكل ديناميكي بدون استخدام any
+//     const whereClause: { user_id: string; status?: enrollment_status } = {
+//       user_id: userId,
+//     };
+//     if (status) {
+//       whereClause.status = status;
+//     }
+
+//     const enrollments = await prisma.enrollments.findMany({
+//       where: whereClause,
+//       orderBy: { created_at: "desc" },
+//       include: {
+//         programs: {
+//           select: {
+//             title: true,
+//             goal_primary: true,
+//             duration_weeks: true,
+//             cover_image: true,
+//             users: { select: { username: true } }, // Coach Name
+//           },
+//         },
+//       },
+//     });
+
+//     // لو اللاعب مش مشترك في أي برنامج حالياً
+//     if (enrollments.length === 0) {
+//       res.status(200).json({ success: true, data: [] });
+//       return;
+//     }
+
+//     const formatted = enrollments.map((e) => ({
+//       id: e.id,
+//       status: e.status,
+//       start_date: e.start_date,
+//       completed_date: e.completed_date,
+//       program: e.programs
+//         ? {
+//             title: e.programs.title,
+//             goal: e.programs.goal_primary,
+//             duration: e.programs.duration_weeks,
+//             cover: e.programs.cover_image,
+//             coach: e.programs.users?.username || "Unknown Coach",
+//           }
+//         : null, // حماية لو البرنامج ممسوح من السيستم
+//     }));
+
+//     res.status(200).json({ success: true, data: formatted });
+//   } catch (error: any) {
+//     console.error("Get Enrollments Error:", error);
+//     res.status(500).json({
+//       success: false,
+//       error: "Failed to fetch enrollments due to an internal server error.",
+//     });
+//   }
+// };
+
 export const getMyEnrollments = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
+    const statusFilter = res.locals.statusFilter as enrollment_status | undefined;
 
-    // 1. حماية: التأكد من وجود الـ User Context
-    if (!userId) {
-      res
-        .status(401)
-        .json({ success: false, error: "Unauthorized. User context missing." });
-      return;
-    }
-    // //
-    // const status = req.query.status as enrollment_status | undefined;
-    // //
-    // const whereClause: any = { user_id: userId };
-    // if (status) whereClause.status = status;
-
-    // 2. تأمين الـ Query Params لمنع كراش الـ Enum في قاعدة البيانات
-    const statusStr = req.query.status as string | undefined;
-    const validStatuses = ["active", "completed", "dropped"]; // ضيف الـ Enums الفعلية من الـ DB عندك
-
-    if (statusStr && !validStatuses.includes(statusStr.toLowerCase().trim())) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid status. Allowed values are: ${validStatuses.join(", ")}`,
-      });
-      return;
+    // بناء الـ Filter بشكل ديناميكي وآمن
+    const whereClause: any = { user_id: userId };
+    if (statusFilter) {
+      whereClause.status = statusFilter;
     }
 
-    const status = statusStr as enrollment_status | undefined;
-
-    // بناء الـ Filter بشكل ديناميكي بدون استخدام any
-    const whereClause: { user_id: string; status?: enrollment_status } = {
-      user_id: userId,
-    };
-    if (status) {
-      whereClause.status = status;
-    }
-
+    // جلب الاشتراكات مع بيانات البرنامج والمدرب
     const enrollments = await prisma.enrollments.findMany({
       where: whereClause,
       orderBy: { created_at: "desc" },
@@ -908,44 +843,39 @@ export const getMyEnrollments = async (
         programs: {
           select: {
             title: true,
-            goal_primary: true,
             duration_weeks: true,
             cover_image: true,
-            users: { select: { username: true } }, // Coach Name
+            users: { select: { username: true } }, // الـ Coach
           },
         },
       },
     });
 
-    // لو اللاعب مش مشترك في أي برنامج حالياً
-    if (enrollments.length === 0) {
-      res.status(200).json({ success: true, data: [] });
+    // 🎯 حالة الـ No enrollments yet: ترجع Array فاضية صريحة [] مع status 200
+    if (!enrollments || enrollments.length === 0) {
+      res.status(200).json([]);
       return;
     }
 
-    const formatted = enrollments.map((e) => ({
-      id: e.id,
+    // 🎯 عمل Mapping للمصفوفة لتكون Flat (مفرودة) تماماً زي طلب الـ Sheet بالملي
+    const formattedEnrollments = enrollments.map((e) => ({
+      enrollment_id: e.id,
       status: e.status,
       start_date: e.start_date,
-      completed_date: e.completed_date,
-      program: e.programs
-        ? {
-            title: e.programs.title,
-            goal: e.programs.goal_primary,
-            duration: e.programs.duration_weeks,
-            cover: e.programs.cover_image,
-            coach: e.programs.users?.username || "Unknown Coach",
-          }
-        : null, // حماية لو البرنامج ممسوح من السيستم
+      completed_date: e.completed_date || null, // بتظهر لو الحالة completed
+      program_title: e.programs?.title || "Unknown Program",
+      coach_name: e.programs?.users?.username || "Unknown Coach",
+      cover_image: e.programs?.cover_image || null,
+      duration_weeks: e.programs?.duration_weeks || 0,
+      baseline_snapshot_id: e.baseline_snapshot_id || null, // مطلوبة في الـ Sheet
     }));
 
-    res.status(200).json({ success: true, data: formatted });
+    // 🎯 إرجاع الـ Array مباشرة في الـ Root بدون غلاف الـ data
+    res.status(200).json(formattedEnrollments);
+
   } catch (error: any) {
     console.error("Get Enrollments Error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to fetch enrollments due to an internal server error.",
-    });
+    next(error); // التمرير الفوري للـ Global Error Handler المركزي
   }
 };
 
