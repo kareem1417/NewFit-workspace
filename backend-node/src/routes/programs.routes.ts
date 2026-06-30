@@ -1,32 +1,96 @@
-import { Router } from 'express';
+import { Router } from "express";
 import {
-    createProgram,
-    listPrograms,
-    getProgramById,
-    updateProgram,
-    deleteProgram,
-    enrollInProgram,
-    completeEnrollment,
-    rateProgram
-} from '../controllers/programs.controller';
-import { authenticateToken } from '../middlewares/auth.middleware';
+  createProgram,
+  listPrograms,
+  getProgramById,
+  updateProgram,
+  deleteProgram,
+  enrollInProgram,
+  completeEnrollment,
+  rateProgram,
+  getMyEnrolledPrograms,
+} from "../controllers/programs.controller";
+import { authenticateToken } from "../middlewares/auth.middleware";
+import {
+  completeEnrollmentValidation,
+  createProgramValidation,
+  enrollProgramValidation,
+  getMyEnrolledProgramsValidation,
+  getProgramValidation,
+  listProgramsValidation,
+  rateProgramValidation,
+  updateProgramValidation,
+} from "../validators/programs.validator";
+import { validate } from "../middlewares/validation.middleware";
 
 const router = Router();
 
-// View routes
-router.get('/', authenticateToken, listPrograms);
-router.get('/:id', authenticateToken, getProgramById);
+// View routes // Validated
+router.get(
+  "/",
+  authenticateToken,
+  listProgramsValidation,
+  validate,
+  listPrograms,
+);
+// router.get('/:id', authenticateToken,getProgramValidation,validate, getProgramById);
+router.get(
+  "/get_program",
+  authenticateToken,
+  getProgramValidation,
+  getProgramById,
+);
 
 // Athlete routes (Enrollment and Rating)
-router.post('/:id/enroll', authenticateToken, enrollInProgram);
-router.post('/:id/rate', authenticateToken, rateProgram);
+// router.post('/:id/enroll', authenticateToken,enrollProgramValidation,validate, enrollInProgram);
+router.post(
+  "/enroll_program",
+  authenticateToken,
+  enrollProgramValidation,
+  enrollInProgram,
+);
+
+// router.post('/:id/rate', authenticateToken,rateProgramValidation,validate, rateProgram);
+router.post(
+  "/rate_program",
+  authenticateToken,
+  rateProgramValidation,
+  rateProgram,
+);
 
 // Complete program route (Note: ID is the Enrollment ID)
-router.post('/enrollments/:id/complete', authenticateToken, completeEnrollment);
+// router.post('/enrollments/:id/complete', authenticateToken,completeEnrollmentValidation,validate, completeEnrollment);
+router.post(
+  "/complete_enrollment",
+  authenticateToken,
+  completeEnrollmentValidation,
+  completeEnrollment,
+);
 
 // Coach routes
-router.post('/', authenticateToken, createProgram);
-router.patch('/:id', authenticateToken, updateProgram);
-router.delete('/:id', authenticateToken, deleteProgram);
+router.post(
+  "/",
+  authenticateToken,
+  createProgramValidation,
+  validate,
+  createProgram,
+); // Validated
+// router.patch('/:id', authenticateToken,updateProgramValidation,validate, updateProgram); // Validated
+router.patch(
+  "/update_program",
+  authenticateToken,
+  updateProgramValidation,
+  updateProgram,
+);
+
+router.delete("/:id", authenticateToken, deleteProgram);
+
+// 🎯 جلب البرامج التي سجل فيها اللاعب الحالي: GET /my_enrolled
+router.get(
+  "/my_enrolled",
+  authenticateToken, // الـ Middleware اللي بيشفر الـ Token ويطلع الـ userId
+  getMyEnrolledProgramsValidation,
+  getMyEnrolledPrograms,
+);
 
 export default router;

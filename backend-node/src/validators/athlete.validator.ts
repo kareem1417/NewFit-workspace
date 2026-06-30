@@ -1,7 +1,11 @@
-import { body , validationResult} from "express-validator";
+import { body, validationResult } from "express-validator";
 import { Request, Response, NextFunction } from "express";
 
-export const createSportProfileValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const createSportProfileValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   const reqAny = req as any;
   const { sport_id, level, weight_class } = req.body;
   const userRole = reqAny.user?.role; // لقط الـ Role من التوكن
@@ -10,7 +14,7 @@ export const createSportProfileValidation = (req: Request, res: Response, next: 
   if (userRole === "coach") {
     res.status(403).json({
       success: false,
-      error: "Forbidden — coaches cannot create athlete profiles."
+      error: "Forbidden — coaches cannot create athlete profiles.",
     });
     return;
   }
@@ -20,7 +24,7 @@ export const createSportProfileValidation = (req: Request, res: Response, next: 
   if (!sport_id || isNaN(parsedSportId) || parsedSportId <= 0) {
     res.status(400).json({
       success: false,
-      error: "Validation error — invalid or missing sport_id."
+      error: "Validation error — invalid or missing sport_id.",
     });
     return;
   }
@@ -29,7 +33,7 @@ export const createSportProfileValidation = (req: Request, res: Response, next: 
   if (!level || typeof level !== "string") {
     res.status(400).json({
       success: false,
-      error: "Validation error — must be novice/amateur/professional."
+      error: "Validation error — must be novice/amateur/professional.",
     });
     return;
   }
@@ -38,7 +42,7 @@ export const createSportProfileValidation = (req: Request, res: Response, next: 
   if (!validLevels.includes(level.toLowerCase().trim())) {
     res.status(400).json({
       success: false,
-      error: "Validation error — must be novice/amateur/professional."
+      error: "Validation error — must be novice/amateur/professional.",
     });
     return;
   }
@@ -47,17 +51,23 @@ export const createSportProfileValidation = (req: Request, res: Response, next: 
   if (!weight_class || typeof weight_class !== "string") {
     res.status(400).json({
       success: false,
-      error: "Validation error — invalid weight class enum."
+      error: "Validation error — invalid weight class enum.",
     });
     return;
   }
 
   // ضيف الـ Enums المعتمدة عندك في الداتا بيز (زي اللي في الـ Sheet: middleweight, welterweight...)
-  const validWeights = ["heavyweight", "middleweight", "welterweight", "lightweight", "featherweight"];
+  const validWeights = [
+    "heavyweight",
+    "middleweight",
+    "welterweight",
+    "lightweight",
+    "featherweight",
+  ];
   if (!validWeights.includes(weight_class.toLowerCase().trim())) {
     res.status(400).json({
       success: false,
-      error: "Validation error — invalid weight class enum."
+      error: "Validation error — invalid weight class enum.",
     });
     return;
   }
@@ -65,15 +75,18 @@ export const createSportProfileValidation = (req: Request, res: Response, next: 
   next();
 };
 
-
-export const updateSportProfileValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const updateSportProfileValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   const { level, weight_class } = req.body;
 
   // 1. حماية: منع إرسال Request فارغ (Empty payload) بناءً على الـ Sheet بالملي
   if (!level && !weight_class) {
     res.status(400).json({
       success: false,
-      error: "Validation error — at least one field required."
+      error: "Validation error — at least one field required.",
     });
     return;
   }
@@ -88,7 +101,7 @@ export const updateSportProfileValidation = (req: Request, res: Response, next: 
     if (!validLevels.includes(level.toLowerCase().trim())) {
       res.status(400).json({
         success: false,
-        error: "Validation error." // مطابقة للـ Sheet بالملي لـ "grandmaster"
+        error: "Validation error.", // مطابقة للـ Sheet بالملي لـ "grandmaster"
       });
       return;
     }
@@ -100,11 +113,18 @@ export const updateSportProfileValidation = (req: Request, res: Response, next: 
       res.status(400).json({ success: false, error: "Validation error." });
       return;
     }
-    const validWeights = ["heavyweight", "middleweight", "welterweight", "lightweight", "featherweight", "light_middleweight"];
+    const validWeights = [
+      "heavyweight",
+      "middleweight",
+      "welterweight",
+      "lightweight",
+      "featherweight",
+      "light_middleweight",
+    ];
     if (!validWeights.includes(weight_class.toLowerCase().trim())) {
       res.status(400).json({
         success: false,
-        error: "Validation error."
+        error: "Validation error.",
       });
       return;
     }
@@ -113,35 +133,49 @@ export const updateSportProfileValidation = (req: Request, res: Response, next: 
   next();
 };
 
-
-export const createSnapshotValidation = (req: Request, res: Response, next: NextFunction): void => {
-  const { sport_id, snapshot_type, program_enrollment_id, test_values } = req.body;
+export const createSnapshotValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
+  const { sport_id, snapshot_type, program_enrollment_id, test_values } =
+    req.body;
 
   // 1. فحص الـ sport_id
   const parsedSportId = Number(sport_id);
   if (!sport_id || isNaN(parsedSportId) || parsedSportId <= 0) {
     res.status(400).json({
       success: false,
-      error: "Validation error — invalid or missing sport_id."
+      error: "Validation error — invalid or missing sport_id.",
     });
     return;
   }
 
   // 2. فحص الـ snapshot_type وضبط الـ Enums المذكورة في الـ Sheet
-  const validSnapshotTypes = ["initial_onboarding", "manual_update", "program_baseline", "program_posttest"];
+  const validSnapshotTypes = [
+    "initial_onboarding",
+    "manual_update",
+    "program_baseline",
+    "program_posttest",
+  ];
   if (!snapshot_type || !validSnapshotTypes.includes(snapshot_type)) {
     res.status(400).json({
       success: false,
-      error: `Validation error — invalid snapshot_type.`
+      error: `Validation error — invalid snapshot_type.`,
     });
     return;
   }
 
   // 3. فحص الـ program_enrollment_id بناءً على النوع
-  if ((snapshot_type === "program_baseline" || snapshot_type === "program_posttest") && !program_enrollment_id) {
+  if (
+    (snapshot_type === "program_baseline" ||
+      snapshot_type === "program_posttest") &&
+    !program_enrollment_id
+  ) {
     res.status(400).json({
       success: false,
-      error: "Validation error — program_enrollment_id is required for this snapshot type."
+      error:
+        "Validation error — program_enrollment_id is required for this snapshot type.",
     });
     return;
   }
@@ -150,7 +184,8 @@ export const createSnapshotValidation = (req: Request, res: Response, next: Next
   if (!test_values || !Array.isArray(test_values) || test_values.length === 0) {
     res.status(400).json({
       success: false,
-      error: "Validation error — test_values array is required and cannot be empty."
+      error:
+        "Validation error — test_values array is required and cannot be empty.",
     });
     return;
   }
@@ -160,14 +195,14 @@ export const createSnapshotValidation = (req: Request, res: Response, next: Next
     if (!item.attribute_test_id || isNaN(Number(item.attribute_test_id))) {
       res.status(400).json({
         success: false,
-        error: "Validation error — invalid attribute_test_id."
+        error: "Validation error — invalid attribute_test_id.",
       });
       return;
     }
     if (item.value === undefined || isNaN(Number(item.value))) {
       res.status(400).json({
         success: false,
-        error: "Validation error — test values must be valid numbers."
+        error: "Validation error — test values must be valid numbers.",
       });
       return;
     }
@@ -176,18 +211,25 @@ export const createSnapshotValidation = (req: Request, res: Response, next: Next
   next();
 };
 
-
-
-export const getSnapshotsValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const getSnapshotsValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   const typeStr = req.query.type as string | undefined;
 
   // 1. فحص الـ snapshot_type enum بناءً على الـ Sheet بالملي
   if (typeStr) {
-    const validSnapshotTypes = ["initial_onboarding", "manual_update", "program_baseline", "program_posttest"];
+    const validSnapshotTypes = [
+      "initial_onboarding",
+      "manual_update",
+      "program_baseline",
+      "program_posttest",
+    ];
     if (!validSnapshotTypes.includes(typeStr)) {
       res.status(400).json({
         success: false,
-        error: "Validation error — invalid snapshot_type enum." // نفس رسالة الـ Sheet بالظبط
+        error: "Validation error — invalid snapshot_type enum.", // نفس رسالة الـ Sheet بالظبط
       });
       return;
     }
@@ -206,18 +248,29 @@ export const getSnapshotsValidation = (req: Request, res: Response, next: NextFu
   next();
 };
 
-
-export const getRadarDataValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const getRadarDataValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   // 🎯 التعديل بناءً على الـ Sheet: أسماء الـ Params بقت level و weight_class
   const levelStr = req.query.level as string | undefined;
   const weightStr = req.query.weight_class as string | undefined;
 
-  const validLevels = ["novice", "amateur", "professional"]; 
+  const validLevels = ["novice", "amateur", "professional"];
   const validWeights = [
-    "flyweight", "bantamweight", "featherweight", "lightweight",
-    "light_welterweight", "welterweight", "light_middleweight",
-    "middleweight", "super_middleweight", "light_heavyweight",
-    "cruiserweight", "heavyweight"
+    "flyweight",
+    "bantamweight",
+    "featherweight",
+    "lightweight",
+    "light_welterweight",
+    "welterweight",
+    "light_middleweight",
+    "middleweight",
+    "super_middleweight",
+    "light_heavyweight",
+    "cruiserweight",
+    "heavyweight",
   ];
 
   // 1. التحقق من الـ level لو مبعوت
@@ -226,7 +279,7 @@ export const getRadarDataValidation = (req: Request, res: Response, next: NextFu
     if (!validLevels.includes(cleanedLevel)) {
       res.status(400).json({
         success: false,
-        error: "Validation error — invalid competitive level enum."
+        error: "Validation error — invalid competitive level enum.",
       });
       return;
     }
@@ -239,7 +292,7 @@ export const getRadarDataValidation = (req: Request, res: Response, next: NextFu
     if (!validWeights.includes(cleanedWeight)) {
       res.status(400).json({
         success: false,
-        error: "Validation error — invalid weight class enum." // مطابقة للـ الـ Sheet
+        error: "Validation error — invalid weight class enum.", // مطابقة للـ الـ Sheet
       });
       return;
     }
@@ -249,8 +302,11 @@ export const getRadarDataValidation = (req: Request, res: Response, next: NextFu
   next();
 };
 
-
-export const getProgressValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const getProgressValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   // 🎯 التعديل: قراءة الـ ID كـ Query Parameter بناءً على الـ Sheet
   const testIdStr = req.query.attribute_test_id as string | undefined;
 
@@ -258,7 +314,7 @@ export const getProgressValidation = (req: Request, res: Response, next: NextFun
   if (!testIdStr) {
     res.status(400).json({
       success: false,
-      error: "Validation error — required param." // نفس رسالة الـ Sheet بالظبط
+      error: "Validation error — required param.", // نفس رسالة الـ Sheet بالظبط
     });
     return;
   }
@@ -269,7 +325,7 @@ export const getProgressValidation = (req: Request, res: Response, next: NextFun
   if (isNaN(attributeTestId) || attributeTestId <= 0) {
     res.status(400).json({
       success: false,
-      error: "Validation error — attribute_test_id must be a positive number."
+      error: "Validation error — attribute_test_id must be a positive number.",
     });
     return;
   }
@@ -279,10 +335,13 @@ export const getProgressValidation = (req: Request, res: Response, next: NextFun
   next();
 };
 
-
-export const getMyEnrollmentsValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const getMyEnrollmentsValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   const statusStr = req.query.status as string | undefined;
-  
+
   // 🎯 الـ Enums المعتمدة في الـ Excel Sheet بالملي
   const validStatuses = ["active", "completed", "cancelled"];
 
@@ -291,7 +350,7 @@ export const getMyEnrollmentsValidation = (req: Request, res: Response, next: Ne
     if (!validStatuses.includes(cleanedStatus)) {
       res.status(400).json({
         success: false,
-        error: "Validation error — invalid status enum." // نفس جملة الـ Sheet بالظبط
+        error: "Validation error — invalid status enum.", // نفس جملة الـ Sheet بالظبط
       });
       return;
     }

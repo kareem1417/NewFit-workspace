@@ -1,4 +1,4 @@
-import { Response , NextFunction} from "express";
+import { Response, NextFunction } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { prisma } from "../config/prisma";
 import {
@@ -26,7 +26,8 @@ const validLevels = ["amateur", "professional"]وهما ال
 // ==========================================
 
 const isValidUUID = (id: string): boolean => {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   return uuidRegex.test(id);
 };
 
@@ -40,7 +41,7 @@ const getAgeGroupId = (dateOfBirth: Date | null | undefined): number => {
     console.warn(
       "Invalid or missing dateOfBirth. Defaulting to Age Group 2 (18-35).",
     );
-    return 2; 
+    return 2;
   }
 
   const age = new Date().getFullYear() - dateOfBirth.getFullYear(); // modified function
@@ -49,12 +50,10 @@ const getAgeGroupId = (dateOfBirth: Date | null | undefined): number => {
   return 3; // 35+
 };
 
-
 // Modification 1: Use exact weight class names from DB and define as Enum
 const getAdjacentWeightClasses = (
   weightClass: weight_class,
 ): weight_class[] => {
-  
   if (!weightClass) return [];
 
   const classes: weight_class[] = [
@@ -135,7 +134,6 @@ const getPercentileWithFallback = async (
 
           const z = calculateZScore(rawValue, mean, stdDev, higherIsBetter);
 
-
           if (isNaN(z) || !isFinite(z)) {
             console.warn(
               `Invalid Z-Score calculated: ${z} for testId: ${testId}.`,
@@ -155,7 +153,6 @@ const getPercentileWithFallback = async (
         continue;
       }
     }
-
 
     return { percentile: getAbsoluteFallback(rawValue), fallbackLevel: 4 };
   } catch (globalError) {
@@ -189,7 +186,7 @@ const getTestName = async (testId: number): Promise<string> => {
 export const createSportProfile = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
@@ -197,21 +194,21 @@ export const createSportProfile = async (
     const parsedSportId = Number(sport_id);
 
     const sportExists = await prisma.sports.findUnique({
-      where: { id: parsedSportId }
+      where: { id: parsedSportId },
     });
 
     if (!sportExists) {
       res.status(404).json({
         success: false,
-        error: "Sport not found."
+        error: "Sport not found.",
       });
       return;
     }
 
     const existingProfile = await prisma.user_sport_profiles.findFirst({
-      where: { 
-        user_id: userId, 
-        sport_id: parsedSportId 
+      where: {
+        user_id: userId,
+        sport_id: parsedSportId,
       },
     });
 
@@ -222,7 +219,6 @@ export const createSportProfile = async (
       });
       return;
     }
-
 
     const newProfile = await prisma.user_sport_profiles.create({
       data: {
@@ -237,25 +233,23 @@ export const createSportProfile = async (
     res.status(201).json(newProfile);
   } catch (error: any) {
     console.error("Create Sport Profile Error:", error);
-    next(error); 
+    next(error);
   }
 };
 // validated
 export const updateSportProfile = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
     const { level, weight_class } = req.body;
 
-    
     const existingProfile = await prisma.user_sport_profiles.findFirst({
       where: { user_id: userId, is_primary: true },
     });
 
-    
     if (!existingProfile) {
       res.status(404).json({
         success: false,
@@ -264,18 +258,16 @@ export const updateSportProfile = async (
       return;
     }
 
-    
     const updateData: any = {};
     if (level) updateData.level = level.toLowerCase().trim();
-    if (weight_class) updateData.weight_class = weight_class.toLowerCase().trim();
-
+    if (weight_class)
+      updateData.weight_class = weight_class.toLowerCase().trim();
 
     await prisma.user_sport_profiles.update({
       where: { id: existingProfile.id },
       data: updateData,
     });
 
-    
     let successMessage = "Both fields updated.";
     if (level && !weight_class) {
       successMessage = "Level updated. weight_class unchanged.";
@@ -283,15 +275,13 @@ export const updateSportProfile = async (
       successMessage = "Weight class updated. level unchanged.";
     }
 
-    
     res.status(200).json({
       success: true,
-      message: successMessage
+      message: successMessage,
     });
-
   } catch (error: any) {
     console.error("Update Sport Profile Error:", error);
-    next(error); 
+    next(error);
   }
 };
 
@@ -300,42 +290,49 @@ export const updateSportProfile = async (
 export const createSnapshot = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    const { sport_id, snapshot_type, program_enrollment_id, notes, test_values } = req.body;
+    const {
+      sport_id,
+      snapshot_type,
+      program_enrollment_id,
+      notes,
+      test_values,
+    } = req.body;
     const parsedSportId = Number(sport_id);
 
-    
     const finalResult = await prisma.$transaction(async (tx) => {
-      
-      const rawTestIds: number[] = test_values.map((t: any) => Number(t.attribute_test_id));
+      const rawTestIds: number[] = test_values.map((t: any) =>
+        Number(t.attribute_test_id),
+      );
       const uniqueTestIds = [...new Set(rawTestIds)];
 
       const testsInfo = await tx.attribute_tests.findMany({
         where: { id: { in: uniqueTestIds } },
       });
 
-      
       if (testsInfo.length !== uniqueTestIds.length) {
         throw new Error("INVALID_TEST_IDS");
       }
-
 
       const snapshot = await tx.physical_snapshots.create({
         data: {
           user_id: userId,
           sport_id: parsedSportId,
           snapshot_type,
-          program_enrollment_id: program_enrollment_id ? String(program_enrollment_id) : null,
+          program_enrollment_id: program_enrollment_id
+            ? String(program_enrollment_id)
+            : null,
           notes,
         },
       });
 
-
       const dataToInsert = test_values.map((test: any) => {
-        const info = testsInfo.find((ti) => ti.id === Number(test.attribute_test_id));
+        const info = testsInfo.find(
+          (ti) => ti.id === Number(test.attribute_test_id),
+        );
         return {
           snapshot_id: snapshot.id,
           attribute_test_id: Number(test.attribute_test_id),
@@ -347,12 +344,14 @@ export const createSnapshot = async (
       await tx.snapshot_test_values.createMany({ data: dataToInsert });
 
       const resolvedTestValues = test_values.map((test: any) => {
-        const info = testsInfo.find((ti) => ti.id === Number(test.attribute_test_id));
+        const info = testsInfo.find(
+          (ti) => ti.id === Number(test.attribute_test_id),
+        );
         return {
           attribute_test_id: Number(test.attribute_test_id),
-          test_name: info?.test_name || "unknown", 
+          test_name: info?.test_name || "unknown",
           value: Number(test.value),
-          unit: info?.unit || "unknown"
+          unit: info?.unit || "unknown",
         };
       });
 
@@ -362,37 +361,36 @@ export const createSnapshot = async (
         sport_id: snapshot.sport_id,
         snapshot_type: snapshot.snapshot_type,
         created_at: snapshot.created_at,
-        test_values: resolvedTestValues
+        test_values: resolvedTestValues,
       };
     });
 
-     res.status(201).json(finalResult);
-
+    res.status(201).json(finalResult);
   } catch (error: any) {
     console.error("Create Snapshot Error:", error);
 
-     if (error.message === "INVALID_TEST_IDS") {
+    if (error.message === "INVALID_TEST_IDS") {
       res.status(404).json({
         success: false,
-        error: "One or more provided attribute_test_ids do not exist."
+        error: "One or more provided attribute_test_ids do not exist.",
       });
       return;
     }
 
-    next(error); 
+    next(error);
   }
 };
 
-// done 
+// done
 
 export const getSnapshots = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    
+
     // استدعاء البيانات النظيفة من الـ Validator
     const { limit, offset, typeStr } = res.locals.cleanQuery;
 
@@ -410,10 +408,10 @@ export const getSnapshots = async (
       orderBy: { created_at: "desc" },
       include: {
         snapshot_test_values: {
-          include: { 
-            attribute_tests: { 
-              select: { test_name: true } 
-            } 
+          include: {
+            attribute_tests: {
+              select: { test_name: true },
+            },
           },
         },
       },
@@ -443,7 +441,6 @@ export const getSnapshots = async (
 
     // إرجاع الـ Array مباشرة لمطابقة الـ Assertion بالملي
     res.status(200).json(formattedSnapshots);
-
   } catch (error: any) {
     console.error("Get Snapshots Error:", error);
     next(error); // التمرير للـ Global Error Handler
@@ -459,7 +456,7 @@ export const getSnapshots = async (
 export const getRadarData = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
@@ -481,9 +478,9 @@ export const getRadarData = async (
     const profile = user.user_sport_profiles[0];
     // 🎯 مصيدة: لو الـ Athlete ملوش بروفايل رياضي مسجل (يرد 404 حسب الـ Sheet)
     if (!profile) {
-      res.status(404).json({ 
-        success: false, 
-        error: "Sport profile not found." 
+      res.status(404).json({
+        success: false,
+        error: "Sport profile not found.",
       });
       return;
     }
@@ -512,18 +509,21 @@ export const getRadarData = async (
     if (!latestSnapshot || latestSnapshot.snapshot_test_values.length === 0) {
       res.status(404).json({
         success: false,
-        error: "No snapshot data found."
+        error: "No snapshot data found.",
       });
       return;
     }
 
     // تجميع وترتيب الـ Test Values على الـ Attributes المرجعية لها
-    const attributeMap = new Map<number, { name: string; tests: any[]; totalWeight: number }>();
-    
+    const attributeMap = new Map<
+      number,
+      { name: string; tests: any[]; totalWeight: number }
+    >();
+
     for (const testVal of latestSnapshot.snapshot_test_values) {
       const attr = testVal.attribute_tests?.sport_attributes;
       if (!attr) continue;
-      
+
       const attrId = attr.id;
       if (!attributeMap.has(attrId)) {
         attributeMap.set(attrId, {
@@ -546,7 +546,9 @@ export const getRadarData = async (
     }
 
     const radar_axes: any[] = [];
-    let foundationPct = 0, acceleratorPct = 0, transferPct = 0;
+    let foundationPct = 0,
+      acceleratorPct = 0,
+      transferPct = 0;
 
     // الحسابات الموزونة والـ Percentiles لكل Attribute والـ Fallbacks بتاعته
     for (const [attrId, attrData] of attributeMap.entries()) {
@@ -576,12 +578,21 @@ export const getRadarData = async (
         }
 
         // عزل الاختبارات المطلوبة لحساب الـ Punch Power
-        if (test.testName === "Trap Bar Deadlift") foundationPct = test.percentile;
-        if (test.testName === "Power Clean" || test.testName === "Box Jump Height") acceleratorPct = test.percentile;
-        if (test.testName === "Medicine Ball Rotational Throw") transferPct = test.percentile;
+        if (test.testName === "Trap Bar Deadlift")
+          foundationPct = test.percentile;
+        if (
+          test.testName === "Power Clean" ||
+          test.testName === "Box Jump Height"
+        )
+          acceleratorPct = test.percentile;
+        if (test.testName === "Medicine Ball Rotational Throw")
+          transferPct = test.percentile;
       }
 
-      const finalPercentile = attrData.totalWeight > 0 ? weightedPercentileSum / attrData.totalWeight : 0;
+      const finalPercentile =
+        attrData.totalWeight > 0
+          ? weightedPercentileSum / attrData.totalWeight
+          : 0;
 
       radar_axes.push({
         attribute_name: attrData.name,
@@ -604,11 +615,11 @@ export const getRadarData = async (
       cohort_used: {
         weight_class: targetWeight,
         level: targetLevel,
-        age_group: ageGroupId === 2 ? "18-35" : ageGroupId === 1 ? "Under 18" : "35+",
+        age_group:
+          ageGroupId === 2 ? "18-35" : ageGroupId === 1 ? "Under 18" : "35+",
       },
       snapshot_date: latestSnapshot.created_at,
     });
-
   } catch (error: any) {
     console.error("Get Radar Data Error:", error);
     next(error); // التمرير للـ Global Error Handler
@@ -622,7 +633,7 @@ export const getRadarData = async (
 export const getProgress = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
@@ -644,15 +655,15 @@ export const getProgress = async (
     if (!testInfo) {
       res.status(404).json({
         success: false,
-        error: "attribute_test not found." // مطابقة للـ Assertion في الـ Sheet
+        error: "attribute_test not found.", // مطابقة للـ Assertion في الـ Sheet
       });
       return;
     }
 
     if (!user || !profile) {
-      res.status(404).json({ 
-        success: false, 
-        error: "Sport profile or user record not found." 
+      res.status(404).json({
+        success: false,
+        error: "Sport profile or user record not found.",
       });
       return;
     }
@@ -693,7 +704,7 @@ export const getProgress = async (
       history.map(async (snap) => {
         const testValueRecord = snap.snapshot_test_values[0];
         const rawValue = testValueRecord ? Number(testValueRecord.value) : 0;
-        
+
         const { percentile } = await getPercentileWithFallback(
           attributeTestId,
           rawValue,
@@ -719,7 +730,6 @@ export const getProgress = async (
       higher_is_better: higherIsBetter,
       data_points,
     });
-
   } catch (error: any) {
     console.error("Get Progress Error:", error);
     next(error); // التمرير للـ Global Error Handler المركزي
@@ -823,11 +833,13 @@ export const getProgress = async (
 export const getMyEnrollments = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    const statusFilter = res.locals.statusFilter as enrollment_status | undefined;
+    const statusFilter = res.locals.statusFilter as
+      | enrollment_status
+      | undefined;
 
     // بناء الـ Filter بشكل ديناميكي وآمن
     const whereClause: any = { user_id: userId };
@@ -872,10 +884,8 @@ export const getMyEnrollments = async (
 
     // 🎯 إرجاع الـ Array مباشرة في الـ Root بدون غلاف الـ data
     res.status(200).json(formattedEnrollments);
-
   } catch (error: any) {
     console.error("Get Enrollments Error:", error);
     next(error); // التمرير الفوري للـ Global Error Handler المركزي
   }
 };
-
