@@ -38,6 +38,7 @@ router.get(
   "/get_program",
   authenticateToken,
   getProgramValidation,
+  validate,
   getProgramById,
 );
 
@@ -47,6 +48,7 @@ router.post(
   "/enroll_program",
   authenticateToken,
   enrollProgramValidation,
+  validate,
   enrollInProgram,
 );
 
@@ -55,6 +57,7 @@ router.post(
   "/rate_program",
   authenticateToken,
   rateProgramValidation,
+  validate,
   rateProgram,
 );
 
@@ -64,6 +67,7 @@ router.post(
   "/complete_enrollment",
   authenticateToken,
   completeEnrollmentValidation,
+  validate,
   completeEnrollment,
 );
 
@@ -80,6 +84,7 @@ router.patch(
   "/update_program",
   authenticateToken,
   updateProgramValidation,
+  validate,
   updateProgram,
 );
 

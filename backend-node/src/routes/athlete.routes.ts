@@ -7,6 +7,7 @@ import {
   getRadarData,
   getProgress,
   getMyEnrollments,
+  upsertUserMetrics,
 } from "../controllers/athlete.controller";
 import { authenticateToken } from "../middlewares/auth.middleware";
 import {
@@ -81,5 +82,7 @@ router.get(
   validate,
   getMyEnrollments,
 );
+
+router.patch("/metrics", authenticateToken, upsertUserMetrics); // new athlete function required for the AI Mode
 
 export default router;

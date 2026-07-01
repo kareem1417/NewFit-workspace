@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
+import 'multer'; // Import for type augmentation to recognize req.file
 
 // --- 5.1 Get Social Feed ---
 export const getFeed = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -68,44 +69,51 @@ export const getFeed = async (req: AuthRequest, res: Response): Promise<void> =>
 // --- 5.2 Create Post ---
 export const createPost = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const userId = String(req.user?.sub);
+        const userId = req.user?.sub as string;
+
+        // With Multer, req.body will contain text fields
         let { content } = req.body;
 
-        if (!content) {
-            res.status(400).json({ success: false, error: "Content is required." });
+        // The uploaded file will be here
+        const file = req.file;
+
+        // 🎯 1. Validation: Post must contain either text content, an image, or both
+        if (!content && !file) {
+            res.status(400).json({
+                success: false,
+                error: "Validation error — post must contain content or an image"
+            });
             return;
         }
 
-        // 1. Sanitize the text
-        // Use quick Regex to remove any HTML Tags like <script> or <b>
-        content = content.replace(/<[^>]*>?/gm, '');
-
-        // 2. Apply max character limit (500 characters)
-        if (content.length > 500) {
-            content = content.substring(0, 500);
+        // 🎯 2. Validation الجديد: نرفض النص لو أطول من 500 حرف
+        if (content && content.length > 500) {
+            res.status(400).json({
+                success: false,
+                error: "Validation error — content too long."
+            });
+            return;
         }
 
-        // 3. Handle image path (if user uploaded an image via Multer)
-        let imagePath = null;
-        if ((req as any).file) {
-            // req.file.path is provided by Multer after saving the image
-            imagePath = (req as any).file.path;
+        // 🎯 3. Sanitize content if it exists (شيلنا الـ substring لأننا ضمنا إنه مش هيعدي 500)
+        if (content) {
+            content = content.replace(/<[^>]*>?/gm, '');
         }
 
-        // 4. Save to the database
-        const post = await prisma.posts.create({
+        const imagePath = file ? file.path : null;
+
+        // Create the post in the database
+        const newPost = await prisma.posts.create({
             data: {
                 user_id: userId,
-                content: content,
-                image_path: imagePath,
-                is_system_generated: false // Standard user post
+                content: content || '',
+                image_path: imagePath
             }
         });
 
         res.status(201).json({
             success: true,
-            message: "Post created successfully",
-            data: post
+            data: newPost
         });
 
     } catch (error: any) {
@@ -113,15 +121,87 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
         res.status(500).json({ success: false, error: "Failed to create post." });
     }
 };
+// --- 5.12 Get Specific Post ---
+export const getSpecificPost = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const userId = String(req.user?.sub);
+        const postId = req.params.id;
 
-// --- 5.3 Get User Posts ---
+        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+        if (!uuidRegex.test(postId as string)) {
+            res.status(400).json({ success: false, error: "Validation error — invalid post ID." });
+            return;
+        }
+
+        const post = await prisma.posts.findUnique({
+            where: { id: postId as string },
+            include: {
+                users: {
+                    select: { id: true, username: true, profile_photo: true, role: true }
+                },
+                likes: {
+                    where: { user_id: userId },
+                    select: { user_id: true }
+                }
+            }
+        });
+
+        if (!post) {
+            res.status(404).json({ success: false, error: "Post not found." });
+            return;
+        }
+
+        // 4. تظبيط شكل الداتا زي الـ Feed بالظبط (عشان الفرونت إند)
+        const { likes, users, ...postData } = post;
+        const formattedPost = {
+            ...postData,
+            author: users,
+            is_liked_by_me: likes.length > 0
+        };
+
+        // 5. الرد بالبوست
+        res.status(200).json({
+            success: true,
+            data: formattedPost
+        });
+
+    } catch (error: any) {
+        console.error("Get Specific Post Error:", error);
+        res.status(500).json({ success: false, error: "Failed to fetch post." });
+    }
+};
+// --- 5.3 Get User Posts --- 
+// --- 5.3 Get User Posts --- 
 export const getUserPosts = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const targetUserId = String(req.params.id);
+        // 🎯 1. استخراج الـ ID (سواء مبعوت في الـ params أو الـ query حسب الـ Route عندك)
+        const targetUserId = (req.params.id || req.query.user_id) as string;
+
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
 
-        // Fetch specific user's posts in chronological order
+        // 🎯 2. الـ Validation الأساسي: نتأكد إن الـ UUID مبعوت وصيغته صح
+        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+        if (!targetUserId || !uuidRegex.test(targetUserId)) {
+            res.status(400).json({ success: false, error: "Validation error — invalid user ID." });
+            return;
+        }
+
+        // 🎯 3. حل التيستاية: تشيك سريع في الداتا بيز هل اليوزر ده عايش وموجود؟
+        const userExists = await prisma.users.findUnique({
+            where: { id: targetUserId }
+        });
+
+        // لو مش موجود (زي حالة الأصفار) اضرب 404 فوراً واقفل الريكويست
+        if (!userExists) {
+            res.status(404).json({
+                success: false,
+                error: "User not found."
+            });
+            return;
+        }
+
+        // 4. لو موجود، كمل عادي وهات البوستات بتاعته (الكود بتاعك السليم)
         const posts = await prisma.posts.findMany({
             where: { user_id: targetUserId },
             take: limit,
@@ -197,6 +277,12 @@ export const unlikePost = async (req: AuthRequest, res: Response): Promise<void>
 
         // 1. Remove like if exists
         // Used deleteMany to avoid needing the exact like ID
+        const post = await prisma.posts.findUnique({ where: { id: postId } });
+        if (!post) {
+            res.status(404).json({ success: false, error: "Post not found." });
+            return;
+        }
+
         await prisma.likes.deleteMany({
             where: { post_id: postId, user_id: userId }
         });
@@ -217,6 +303,14 @@ export const getComments = async (req: AuthRequest, res: Response): Promise<void
         const postId = String(req.params.id);
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
+        const post = await prisma.posts.findUnique({ where: { id: postId } });
+        if (!post) {
+            res.status(401).json({
+                success: false,
+                error: "Post not found."
+            });
+            return;
+        }
 
         // Fetch comments (oldest first, like a chat system)
         const comments = await prisma.comments.findMany({
@@ -260,22 +354,41 @@ export const addComment = async (req: AuthRequest, res: Response): Promise<void>
         const postId = String(req.params.id);
         let { content } = req.body;
 
-        if (!content) {
-            res.status(400).json({ success: false, error: "Comment content is required." });
+        // 🎯 1. منع الكومنت الفاضي أو اللي كله مسافات
+        if (!content || content.trim().length === 0) {
+            res.status(400).json({
+                success: false,
+                error: "Validation error — Comment content is required and cannot be empty."
+            });
             return;
         }
 
-        // 1. Ensure the post exists
+        // إزالة المسافات الزايدة من الأول والآخر عشان نعد الحروف صح
+        content = content.trim();
+
+        // 🎯 2. منع الكومنت لو عدى 500 حرف
+        if (content.length > 500) {
+            res.status(400).json({
+                success: false,
+                error: "Validation error — Comment exceeds maximum length of 500 characters."
+            });
+            return;
+        }
+
+        // 🎯 3. التأكد إن البوست موجود (ورجوع إيرور 401 زي ما طلبت)
         const post = await prisma.posts.findUnique({ where: { id: postId } });
         if (!post) {
-            res.status(404).json({ success: false, error: "Post not found." });
+            res.status(401).json({
+                success: false,
+                error: "Post not found."
+            });
             return;
         }
 
-        // 2. Sanitize text and apply max 500 characters limit
-        content = content.replace(/<[^>]*>?/gm, '').substring(0, 500);
+        // 4. فلترة النص من أي HTML Tags للحماية (وشيلنا الـ substring عشان عملنا Validation فوق)
+        content = content.replace(/<[^>]*>?/gm, '');
 
-        // 3. Add comment (no manual count update, Trigger handles it)
+        // 5. إضافة الكومنت في الداتا بيز
         const comment = await prisma.comments.create({
             data: {
                 user_id: userId,
@@ -372,6 +485,25 @@ export const getFollowers = async (req: AuthRequest, res: Response): Promise<voi
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
 
+        // 🎯 1. Validate user ID format
+        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+        if (!uuidRegex.test(targetUserId)) {
+            res.status(400).json({ success: false, error: "Validation error — invalid user ID." });
+            return;
+        }
+
+        // 🎯 2. Check if the target user exists
+        const userExists = await prisma.users.findUnique({
+            where: { id: targetUserId }
+        });
+
+        if (!userExists) {
+            res.status(404).json({
+                success: false,
+                error: "User not found."
+            });
+            return;
+        }
         // Fetch list of followers (users following this user)
         const followers = await prisma.follows.findMany({
             where: { followee_id: targetUserId },
@@ -423,6 +555,26 @@ export const getFollowing = async (req: AuthRequest, res: Response): Promise<voi
         const targetUserId = String(req.params.id);
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
+
+        // 🎯 1. Validate user ID format
+        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+        if (!uuidRegex.test(targetUserId)) {
+            res.status(400).json({ success: false, error: "Validation error — invalid user ID." });
+            return;
+        }
+
+        // 🎯 2. Check if the target user exists
+        const userExists = await prisma.users.findUnique({
+            where: { id: targetUserId }
+        });
+
+        if (!userExists) {
+            res.status(404).json({
+                success: false,
+                error: "User not found."
+            });
+            return;
+        }
 
         // Fetch list of users this user is following
         const following = await prisma.follows.findMany({

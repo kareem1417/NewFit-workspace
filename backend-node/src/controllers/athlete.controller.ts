@@ -11,6 +11,7 @@ import {
   competitive_level,
   weight_class,
   enrollment_status,
+  user_goal_enum,
 } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 
@@ -740,96 +741,6 @@ export const getProgress = async (
 // 3.7: Enrollments
 // ==========================================
 
-// export const getMyEnrollments = async (
-//   req: AuthRequest,
-//   res: Response,
-// ): Promise<void> => {
-//   try {
-//     const userId = req.user?.sub as string;
-
-//     // 1. حماية: التأكد من وجود الـ User Context
-//     if (!userId) {
-//       res
-//         .status(401)
-//         .json({ success: false, error: "Unauthorized. User context missing." });
-//       return;
-//     }
-//     // //
-//     // const status = req.query.status as enrollment_status | undefined;
-//     // //
-//     // const whereClause: any = { user_id: userId };
-//     // if (status) whereClause.status = status;
-
-//     // 2. تأمين الـ Query Params لمنع كراش الـ Enum في قاعدة البيانات
-//     const statusStr = req.query.status as string | undefined;
-//     const validStatuses = ["active", "completed", "dropped"]; // ضيف الـ Enums الفعلية من الـ DB عندك
-
-//     if (statusStr && !validStatuses.includes(statusStr.toLowerCase().trim())) {
-//       res.status(400).json({
-//         success: false,
-//         error: `Invalid status. Allowed values are: ${validStatuses.join(", ")}`,
-//       });
-//       return;
-//     }
-
-//     const status = statusStr as enrollment_status | undefined;
-
-//     // بناء الـ Filter بشكل ديناميكي بدون استخدام any
-//     const whereClause: { user_id: string; status?: enrollment_status } = {
-//       user_id: userId,
-//     };
-//     if (status) {
-//       whereClause.status = status;
-//     }
-
-//     const enrollments = await prisma.enrollments.findMany({
-//       where: whereClause,
-//       orderBy: { created_at: "desc" },
-//       include: {
-//         programs: {
-//           select: {
-//             title: true,
-//             goal_primary: true,
-//             duration_weeks: true,
-//             cover_image: true,
-//             users: { select: { username: true } }, // Coach Name
-//           },
-//         },
-//       },
-//     });
-
-//     // لو اللاعب مش مشترك في أي برنامج حالياً
-//     if (enrollments.length === 0) {
-//       res.status(200).json({ success: true, data: [] });
-//       return;
-//     }
-
-//     const formatted = enrollments.map((e) => ({
-//       id: e.id,
-//       status: e.status,
-//       start_date: e.start_date,
-//       completed_date: e.completed_date,
-//       program: e.programs
-//         ? {
-//             title: e.programs.title,
-//             goal: e.programs.goal_primary,
-//             duration: e.programs.duration_weeks,
-//             cover: e.programs.cover_image,
-//             coach: e.programs.users?.username || "Unknown Coach",
-//           }
-//         : null, // حماية لو البرنامج ممسوح من السيستم
-//     }));
-
-//     res.status(200).json({ success: true, data: formatted });
-//   } catch (error: any) {
-//     console.error("Get Enrollments Error:", error);
-//     res.status(500).json({
-//       success: false,
-//       error: "Failed to fetch enrollments due to an internal server error.",
-//     });
-//   }
-// };
-
 export const getMyEnrollments = async (
   req: AuthRequest,
   res: Response,
@@ -887,5 +798,93 @@ export const getMyEnrollments = async (
   } catch (error: any) {
     console.error("Get Enrollments Error:", error);
     next(error); // التمرير الفوري للـ Global Error Handler المركزي
+  }
+};
+
+export const upsertUserMetrics = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = req.user?.sub as string;
+    const {
+      height_cm,
+      weight_kg,
+      goal,
+      training_days_per_week,
+      years_training,
+      has_injury_history,
+      endurance_score,
+      strength_score,
+      speed_score,
+      flexibility_score,
+      explosiveness_score,
+      recovery_score,
+    } = req.body;
+
+    // Validation أساسي للحقول الإجبارية
+    if (
+      !height_cm ||
+      !weight_kg ||
+      !goal ||
+      training_days_per_week === undefined ||
+      years_training === undefined
+    ) {
+      res.status(400).json({
+        success: false,
+        error:
+          "Missing required fields: height_cm, weight_kg, goal, training_days_per_week, and years_training are required.",
+      });
+      return;
+    }
+
+    // التأكد إن الهدف المبعوت موجود في الـ Enum
+    const validGoals = Object.keys(user_goal_enum);
+    if (!validGoals.includes(goal)) {
+      res.status(400).json({
+        success: false,
+        error: `Invalid goal. Allowed values are: ${validGoals.join(", ")}`,
+      });
+      return;
+    }
+
+    // تجهيز الداتا عشان نستخدمها في الـ Create والـ Update
+    const metricsData = {
+      height_cm: Number(height_cm),
+      weight_kg: Number(weight_kg),
+      goal: goal as user_goal_enum,
+      training_days_per_week: Number(training_days_per_week),
+      years_training: Number(years_training),
+      has_injury_history: has_injury_history ?? false,
+      // التقييمات لو مبعتتش هنحط الديفولت بتاعها 5 زي الداتا بيز
+      endurance_score: endurance_score ? Number(endurance_score) : 5,
+      strength_score: strength_score ? Number(strength_score) : 5,
+      speed_score: speed_score ? Number(speed_score) : 5,
+      flexibility_score: flexibility_score ? Number(flexibility_score) : 5,
+      explosiveness_score: explosiveness_score
+        ? Number(explosiveness_score)
+        : 5,
+      recovery_score: recovery_score ? Number(recovery_score) : 5,
+    };
+
+    const metrics = await prisma.user_metrics.upsert({
+      where: { user_id: userId },
+      update: metricsData,
+      create: {
+        user_id: userId,
+        ...metricsData,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "User metrics saved successfully!",
+      data: metrics,
+    });
+  } catch (error: any) {
+    console.error("Upsert User Metrics Error:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to save user metrics." });
   }
 };
