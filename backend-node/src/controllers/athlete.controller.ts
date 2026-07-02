@@ -1,890 +1,519 @@
-import { Response, NextFunction } from "express";
-import { AuthRequest } from "../middlewares/auth.middleware";
-import { prisma } from "../config/prisma";
-import {
-  calculateZScore,
-  calculatePercentile,
-  calculatePunchPower,
-} from "../services/calculation.service";
-import {
-  snapshot_type,
-  competitive_level,
-  weight_class,
-  enrollment_status,
-  user_goal_enum,
-} from "@prisma/client";
-import { Prisma } from "@prisma/client";
-
-/* بسم الله الرحمن الرحيم 
-مبدأيا كده في حاجات ف الكود يعني حااسس انها ناقصه زي الجزء دا اظن لازم اسال كريم فيه 
-زي مثلا ال levels اللي عندي ف البرنامج 
-علشان انا خنا ضايف 2 levels 
-const validLevels = ["amateur", "professional"]وهما ال 
-*/
+import { Response, NextFunction } from 'express';
+import { AuthRequest } from '../middlewares/auth.middleware';
+import { prisma } from '../config/prisma';
+import { calculateZScore, calculatePercentile, calculatePunchPower } from '../services/calculation.service';
+import { snapshot_type, competitive_level, weight_class, enrollment_status, user_goal_enum } from '@prisma/client';
+import { AppError } from '../utils/AppError'; // 🎯 تأكد من المسار
 
 // ==========================================
-// Helper Functions for CR-14 & CR-15
+// Helper Functions
 // ==========================================
-
-const isValidUUID = (id: string): boolean => {
-  const uuidRegex =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(id);
+const getAgeGroupId = (dateOfBirth: Date): number => {
+    const age = new Date().getFullYear() - dateOfBirth.getFullYear();
+    if (age < 18) return 1;
+    if (age <= 35) return 2;
+    return 3;
 };
 
-const getAgeGroupId = (dateOfBirth: Date | null | undefined): number => {
-  // Guard Clause: حماية في حالة عدم إرسال تاريخ الميلاد أو إرساله بشكل خاطئ
-  if (
-    !dateOfBirth ||
-    !(dateOfBirth instanceof Date) ||
-    isNaN(dateOfBirth.getTime())
-  ) {
-    console.warn(
-      "Invalid or missing dateOfBirth. Defaulting to Age Group 2 (18-35).",
-    );
-    return 2;
-  }
-
-  const age = new Date().getFullYear() - dateOfBirth.getFullYear(); // modified function
-  if (age < 18) return 1; // Under 18
-  if (age <= 35) return 2; // 18-35
-  return 3; // 35+
+const getAdjacentWeightClasses = (weightClass: weight_class): weight_class[] => {
+    const classes: weight_class[] = [
+        'flyweight', 'bantamweight', 'featherweight', 'lightweight',
+        'light_welterweight', 'welterweight', 'light_middleweight', 'middleweight',
+        'super_middleweight', 'light_heavyweight', 'cruiserweight', 'heavyweight'
+    ];
+    const idx = classes.indexOf(weightClass);
+    if (idx === -1) return [];
+    const adjacent: weight_class[] = [];
+    if (idx > 0) adjacent.push(classes[idx - 1]);
+    if (idx < classes.length - 1) adjacent.push(classes[idx + 1]);
+    return adjacent;
 };
 
-// Modification 1: Use exact weight class names from DB and define as Enum
-const getAdjacentWeightClasses = (
-  weightClass: weight_class,
-): weight_class[] => {
-  if (!weightClass) return [];
-
-  const classes: weight_class[] = [
-    "flyweight",
-    "bantamweight",
-    "featherweight",
-    "lightweight",
-    "light_welterweight",
-    "welterweight",
-    "light_middleweight",
-    "middleweight",
-    "super_middleweight",
-    "light_heavyweight",
-    "cruiserweight",
-    "heavyweight",
-  ];
-  const idx = classes.indexOf(weightClass);
-  if (idx === -1) return [];
-  const adjacent: weight_class[] = [];
-  if (idx > 0) adjacent.push(classes[idx - 1]);
-  if (idx < classes.length - 1) adjacent.push(classes[idx + 1]);
-  return adjacent;
-};
-
-/**
- * 5-level fallback cascade: with robust Error Handling //
- */
-// Modification 2: Replace string with competitive_level and weight_class
 const getPercentileWithFallback = async (
-  testId: number,
-  rawValue: number,
-  higherIsBetter: boolean,
-  userLevel: competitive_level,
-  userWeight: weight_class,
-  userAgeGroupId: number,
+    testId: number, rawValue: number, higherIsBetter: boolean,
+    userLevel: competitive_level, userWeight: weight_class, userAgeGroupId: number
 ): Promise<{ percentile: number; fallbackLevel: number }> => {
-  const getAbsoluteFallback = (val: number) =>
-    Math.min(99, Math.max(1, Math.floor(val / 2)));
-
-  try {
     const fallbackSteps: any[] = [
-      { weight: userWeight, level: userLevel, ageGroup: userAgeGroupId },
-      { weight: userWeight, level: userLevel, ageGroup: undefined },
-      {
-        weight: { in: getAdjacentWeightClasses(userWeight) },
-        level: userLevel,
-        ageGroup: undefined,
-      },
-      { weight: undefined, level: userLevel, ageGroup: undefined },
-      { weight: undefined, level: undefined, ageGroup: undefined },
+        { weight: userWeight, level: userLevel, ageGroup: userAgeGroupId },
+        { weight: userWeight, level: userLevel, ageGroup: undefined },
+        { weight: { in: getAdjacentWeightClasses(userWeight) }, level: userLevel, ageGroup: undefined },
+        { weight: undefined, level: userLevel, ageGroup: undefined },
+        { weight: undefined, level: undefined, ageGroup: undefined }
     ];
 
     for (let step = 0; step < fallbackSteps.length; step++) {
-      const criteria = fallbackSteps[step];
-
-      // محاط بـ try/catch داخلي لضمان استمرار اللوب حتى لو خطوة واحدة فشلت في الـ Query
-      try {
+        const criteria = fallbackSteps[step];
         const norm = await prisma.normative_data.findFirst({
-          where: {
-            attribute_test_id: testId,
-            ...(criteria.weight && { weight_class: criteria.weight }),
-            ...(criteria.level && { level: criteria.level }),
-            ...(criteria.ageGroup && { age_group_id: criteria.ageGroup }),
-          },
+            where: {
+                attribute_test_id: testId,
+                ...(criteria.weight && { weight_class: criteria.weight }),
+                ...(criteria.level && { level: criteria.level }),
+                ...(criteria.ageGroup && { age_group_id: criteria.ageGroup })
+            }
         });
-
         if (norm) {
-          const mean = Number(norm.mean_value);
-          const stdDev = Number(norm.std_dev);
-
-          // حماية هامة جداً: منع الـ Division by Zero لو الـ standard deviation بصفر في قاعدة البيانات
-          if (stdDev === 0) {
-            console.warn(
-              `Standard deviation is 0 for testId: ${testId} in fallback step ${step}. Skipping to next fallback.`,
-            );
-            continue;
-          }
-
-          const z = calculateZScore(rawValue, mean, stdDev, higherIsBetter);
-
-          if (isNaN(z) || !isFinite(z)) {
-            console.warn(
-              `Invalid Z-Score calculated: ${z} for testId: ${testId}.`,
-            );
-            continue;
-          }
-
-          const percentile = calculatePercentile(z);
-          return { percentile, fallbackLevel: step };
+            const z = calculateZScore(rawValue, Number(norm.mean_value), Number(norm.std_dev), higherIsBetter);
+            const percentile = calculatePercentile(z);
+            return { percentile, fallbackLevel: step };
         }
-      } catch (stepError) {
-        console.error(
-          `Database error during fallback step ${step} for testId ${testId}:`,
-          stepError,
-        );
-        // بنعمل continue عشان نجرب الخطوة الأسهل اللي بعدها بدل ما نوقع السيرفر
-        continue;
-      }
     }
-
-    return { percentile: getAbsoluteFallback(rawValue), fallbackLevel: 4 };
-  } catch (globalError) {
-    // حماية عليا لو الكود الخارجي حصل فيه أي مشكلة غير متوقعة
-    console.error(
-      `Global error in getPercentileWithFallback for testId ${testId}:`,
-      globalError,
-    );
-    return { percentile: getAbsoluteFallback(rawValue), fallbackLevel: 4 };
-  }
+    const fallbackPercentile = Math.min(99, Math.max(1, Math.floor(rawValue / 2)));
+    return { percentile: fallbackPercentile, fallbackLevel: 4 };
 };
 
 const getTestName = async (testId: number): Promise<string> => {
-  try {
-    if (!testId || isNaN(testId)) return "Unknown";
-
     const test = await prisma.attribute_tests.findUnique({
-      where: { id: testId },
-      select: { test_name: true },
+        where: { id: testId },
+        select: { test_name: true }
     });
-    return test?.test_name || "Unknown";
-  } catch (error) {
-    console.error(`Error fetching test name for ID ${testId}:`, error);
-    return "Unknown"; // بنرجع اسم افتراضي عشان الـ Response يكمل وميضربش 500
-  }
-};
-// ==========================================
-// 3.1 & 3.2: Sport Profiles
-// ==========================================
-// Validates
-export const createSportProfile = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-    const { sport_id, level, weight_class, is_primary } = req.body;
-    const parsedSportId = Number(sport_id);
-
-    const sportExists = await prisma.sports.findUnique({
-      where: { id: parsedSportId },
-    });
-
-    if (!sportExists) {
-      res.status(404).json({
-        success: false,
-        error: "Sport not found.",
-      });
-      return;
-    }
-
-    const existingProfile = await prisma.user_sport_profiles.findFirst({
-      where: {
-        user_id: userId,
-        sport_id: parsedSportId,
-      },
-    });
-
-    if (existingProfile) {
-      res.status(409).json({
-        success: false,
-        error: "Conflict — sport profile already exists. Use PATCH to update.",
-      });
-      return;
-    }
-
-    const newProfile = await prisma.user_sport_profiles.create({
-      data: {
-        user_id: userId,
-        sport_id: parsedSportId,
-        level: level.toLowerCase().trim(),
-        weight_class: weight_class.toLowerCase().trim(),
-        is_primary: is_primary !== undefined ? Boolean(is_primary) : true,
-      },
-    });
-
-    res.status(201).json(newProfile);
-  } catch (error: any) {
-    console.error("Create Sport Profile Error:", error);
-    next(error);
-  }
-};
-// validated
-export const updateSportProfile = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-    const { level, weight_class } = req.body;
-
-    const existingProfile = await prisma.user_sport_profiles.findFirst({
-      where: { user_id: userId, is_primary: true },
-    });
-
-    if (!existingProfile) {
-      res.status(404).json({
-        success: false,
-        error: "Not found — create profile first.",
-      });
-      return;
-    }
-
-    const updateData: any = {};
-    if (level) updateData.level = level.toLowerCase().trim();
-    if (weight_class)
-      updateData.weight_class = weight_class.toLowerCase().trim();
-
-    await prisma.user_sport_profiles.update({
-      where: { id: existingProfile.id },
-      data: updateData,
-    });
-
-    let successMessage = "Both fields updated.";
-    if (level && !weight_class) {
-      successMessage = "Level updated. weight_class unchanged.";
-    } else if (!level && weight_class) {
-      successMessage = "Weight class updated. level unchanged.";
-    }
-
-    res.status(200).json({
-      success: true,
-      message: successMessage,
-    });
-  } catch (error: any) {
-    console.error("Update Sport Profile Error:", error);
-    next(error);
-  }
-};
-
-// validated
-
-export const createSnapshot = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-    const {
-      sport_id,
-      snapshot_type,
-      program_enrollment_id,
-      notes,
-      test_values,
-    } = req.body;
-    const parsedSportId = Number(sport_id);
-
-    const finalResult = await prisma.$transaction(async (tx) => {
-      const rawTestIds: number[] = test_values.map((t: any) =>
-        Number(t.attribute_test_id),
-      );
-      const uniqueTestIds = [...new Set(rawTestIds)];
-
-      const testsInfo = await tx.attribute_tests.findMany({
-        where: { id: { in: uniqueTestIds } },
-      });
-
-      if (testsInfo.length !== uniqueTestIds.length) {
-        throw new Error("INVALID_TEST_IDS");
-      }
-
-      const snapshot = await tx.physical_snapshots.create({
-        data: {
-          user_id: userId,
-          sport_id: parsedSportId,
-          snapshot_type,
-          program_enrollment_id: program_enrollment_id
-            ? String(program_enrollment_id)
-            : null,
-          notes,
-        },
-      });
-
-      const dataToInsert = test_values.map((test: any) => {
-        const info = testsInfo.find(
-          (ti) => ti.id === Number(test.attribute_test_id),
-        );
-        return {
-          snapshot_id: snapshot.id,
-          attribute_test_id: Number(test.attribute_test_id),
-          value: new Prisma.Decimal(test.value),
-          unit: info?.unit || "unknown",
-        };
-      });
-
-      await tx.snapshot_test_values.createMany({ data: dataToInsert });
-
-      const resolvedTestValues = test_values.map((test: any) => {
-        const info = testsInfo.find(
-          (ti) => ti.id === Number(test.attribute_test_id),
-        );
-        return {
-          attribute_test_id: Number(test.attribute_test_id),
-          test_name: info?.test_name || "unknown",
-          value: Number(test.value),
-          unit: info?.unit || "unknown",
-        };
-      });
-
-      return {
-        id: snapshot.id,
-        user_id: snapshot.user_id,
-        sport_id: snapshot.sport_id,
-        snapshot_type: snapshot.snapshot_type,
-        created_at: snapshot.created_at,
-        test_values: resolvedTestValues,
-      };
-    });
-
-    res.status(201).json(finalResult);
-  } catch (error: any) {
-    console.error("Create Snapshot Error:", error);
-
-    if (error.message === "INVALID_TEST_IDS") {
-      res.status(404).json({
-        success: false,
-        error: "One or more provided attribute_test_ids do not exist.",
-      });
-      return;
-    }
-
-    next(error);
-  }
-};
-
-// done
-
-export const getSnapshots = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-
-    // استدعاء البيانات النظيفة من الـ Validator
-    const { limit, offset, typeStr } = res.locals.cleanQuery;
-
-    // بناء الـ Where Clause بشكل ديناميكي وآمن للـ Prisma
-    const whereClause: any = { user_id: userId };
-    if (typeStr) {
-      whereClause.snapshot_type = typeStr;
-    }
-
-    // سحب البيانات مرتبة تنازلياً بالأحدث (DESC)
-    const snapshots = await prisma.physical_snapshots.findMany({
-      where: whereClause,
-      take: limit,
-      skip: offset,
-      orderBy: { created_at: "desc" },
-      include: {
-        snapshot_test_values: {
-          include: {
-            attribute_tests: {
-              select: { test_name: true },
-            },
-          },
-        },
-      },
-    });
-
-    // لو مفيش snapshots أو الـ offset مبروح لبعيد، هيرجع Array فاضية [] أوتوماتيك مع status 200
-    if (!snapshots || snapshots.length === 0) {
-      res.status(200).json([]);
-      return;
-    }
-
-    // عمل Format وتجميع الـ test_values لكل snapshot بالملي زي طلب الـ Sheet
-    const formattedSnapshots = snapshots.map((snap) => ({
-      id: snap.id,
-      user_id: snap.user_id,
-      sport_id: snap.sport_id,
-      snapshot_type: snap.snapshot_type,
-      created_at: snap.created_at,
-      notes: snap.notes || null,
-      test_values: snap.snapshot_test_values.map((tv) => ({
-        attribute_test_id: tv.attribute_test_id,
-        test_name: tv.attribute_tests?.test_name || "unknown",
-        value: Number(tv.value), // تحويل الـ Decimal لـ number صريح لراحة الـ JSON
-        unit: tv.unit,
-      })),
-    }));
-
-    // إرجاع الـ Array مباشرة لمطابقة الـ Assertion بالملي
-    res.status(200).json(formattedSnapshots);
-  } catch (error: any) {
-    console.error("Get Snapshots Error:", error);
-    next(error); // التمرير للـ Global Error Handler
-  }
+    return test?.test_name || 'Unknown';
 };
 
 // ==========================================
-// 3.5: Unified Radar & Punch Power Data (CR-14 & CR-15 fixed)
+// Controllers
 // ==========================================
 
-// Validated
+export const createSportProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { sport_id = 1, level, weight_class, is_primary = true } = req.body;
 
-export const getRadarData = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-
-    // 1. جلب بيانات المستخدم والـ Sport Profile الأساسي له
-    const user = await prisma.users.findUnique({
-      where: { id: userId },
-      select: {
-        date_of_birth: true,
-        user_sport_profiles: { where: { is_primary: true } },
-      },
-    });
-
-    if (!user) {
-      res.status(404).json({ success: false, error: "User not found." });
-      return;
-    }
-
-    const profile = user.user_sport_profiles[0];
-    // 🎯 مصيدة: لو الـ Athlete ملوش بروفايل رياضي مسجل (يرد 404 حسب الـ Sheet)
-    if (!profile) {
-      res.status(404).json({
-        success: false,
-        error: "Sport profile not found.",
-      });
-      return;
-    }
-
-    // تحديد الـ Cohort المستخدم (إما المبعوث كـ Override أو الأساسي من البروفايل)
-    const ageGroupId = getAgeGroupId(user.date_of_birth);
-    const targetLevel = res.locals.overrideLevel || profile.level;
-    const targetWeight = res.locals.overrideWeight || profile.weight_class;
-
-    // 2. جلب أحدث Snapshot في السيستم للاعب
-    const latestSnapshot = await prisma.physical_snapshots.findFirst({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-      include: {
-        snapshot_test_values: {
-          include: {
-            attribute_tests: {
-              include: { sport_attributes: true },
-            },
-          },
-        },
-      },
-    });
-
-    // 🎯 مصيدة: لو مفيش أي Snapshots متسجلة للاعب (يرد 404 حسب الـ Sheet)
-    if (!latestSnapshot || latestSnapshot.snapshot_test_values.length === 0) {
-      res.status(404).json({
-        success: false,
-        error: "No snapshot data found.",
-      });
-      return;
-    }
-
-    // تجميع وترتيب الـ Test Values على الـ Attributes المرجعية لها
-    const attributeMap = new Map<
-      number,
-      { name: string; tests: any[]; totalWeight: number }
-    >();
-
-    for (const testVal of latestSnapshot.snapshot_test_values) {
-      const attr = testVal.attribute_tests?.sport_attributes;
-      if (!attr) continue;
-
-      const attrId = attr.id;
-      if (!attributeMap.has(attrId)) {
-        attributeMap.set(attrId, {
-          name: attr.name,
-          tests: [],
-          totalWeight: 0,
+        const existingProfile = await prisma.user_sport_profiles.findFirst({
+            where: { user_id: userId, sport_id: Number(sport_id) }
         });
-      }
-      const entry = attributeMap.get(attrId)!;
-      const weight = Number(testVal.attribute_tests?.weight || 1);
 
-      entry.tests.push({
-        testId: testVal.attribute_test_id,
-        rawValue: Number(testVal.value),
-        higherIsBetter: testVal.attribute_tests?.higher_is_better ?? true,
-        weight: weight,
-        unit: testVal.unit,
-      });
-      entry.totalWeight += weight;
+        if (existingProfile) {
+            return next(new AppError("Conflict — sport profile already exists. Use PATCH to update.", 409));
+        }
+        const sportExists = await prisma.sports.findUnique({
+            where: { id: Number(sport_id) }
+        });
+
+        if (!sportExists) {
+            return next(new AppError("Sport not found. Please provide a valid sport_id.", 404));
+        }
+        const newProfile = await prisma.user_sport_profiles.create({
+            data: { user_id: userId, sport_id: Number(sport_id), level, weight_class, is_primary }
+        });
+
+        res.status(201).json({ success: true, message: "Sport profile created successfully!", data: newProfile });
+    } catch (error: any) {
+        console.error("Create Sport Profile Error:", error);
+        return next(new AppError("Failed to create sport profile.", 500));
     }
+};
 
-    const radar_axes: any[] = [];
-    let foundationPct = 0,
-      acceleratorPct = 0,
-      transferPct = 0;
+export const upsertUserMetrics = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { height_cm, weight_kg, goal, training_days_per_week, years_training, has_injury_history, endurance_score, strength_score, speed_score, flexibility_score, explosiveness_score, recovery_score } = req.body;
 
-    // الحسابات الموزونة والـ Percentiles لكل Attribute والـ Fallbacks بتاعته
-    for (const [attrId, attrData] of attributeMap.entries()) {
-      let weightedPercentileSum = 0;
-      let highestFallback = 0;
-
-      const processedTests = await Promise.all(
-        attrData.tests.map(async (test) => {
-          const percentileData = await getPercentileWithFallback(
-            test.testId,
-            test.rawValue,
-            test.higherIsBetter,
-            targetLevel,
-            targetWeight,
-            ageGroupId,
-          );
-          const testName = await getTestName(test.testId);
-          return { ...test, ...percentileData, testName };
-        }),
-      );
-
-      for (const test of processedTests) {
-        weightedPercentileSum += test.percentile * test.weight;
-
-        if (test.fallbackLevel > highestFallback) {
-          highestFallback = test.fallbackLevel;
+        if (!height_cm || !weight_kg || !goal || training_days_per_week === undefined || years_training === undefined) {
+            return next(new AppError("Missing required fields: height_cm, weight_kg, goal, training_days_per_week, and years_training are required.", 400));
         }
 
-        // عزل الاختبارات المطلوبة لحساب الـ Punch Power
-        if (test.testName === "Trap Bar Deadlift")
-          foundationPct = test.percentile;
-        if (
-          test.testName === "Power Clean" ||
-          test.testName === "Box Jump Height"
-        )
-          acceleratorPct = test.percentile;
-        if (test.testName === "Medicine Ball Rotational Throw")
-          transferPct = test.percentile;
-      }
+        const validGoals = Object.keys(user_goal_enum);
+        if (!validGoals.includes(goal)) {
+            return next(new AppError(`Invalid goal. Allowed values are: ${validGoals.join(', ')}`, 400));
+        }
 
-      const finalPercentile =
-        attrData.totalWeight > 0
-          ? weightedPercentileSum / attrData.totalWeight
-          : 0;
-
-      radar_axes.push({
-        attribute_name: attrData.name,
-        percentile: Math.round(finalPercentile),
-        fallback_level: highestFallback,
-      });
-    }
-
-    const punch_power = {
-      score: calculatePunchPower(foundationPct, acceleratorPct, transferPct),
-      foundation: { percentile: foundationPct },
-      accelerator: { percentile: acceleratorPct },
-      transfer: { percentile: transferPct },
-    };
-
-    // 🎯 الـ Response النهائي: طالع من غير زحمة الـ success والـ data لمطابقة الـ Assertion بالملي!
-    res.status(200).json({
-      radar_axes,
-      punch_power,
-      cohort_used: {
-        weight_class: targetWeight,
-        level: targetLevel,
-        age_group:
-          ageGroupId === 2 ? "18-35" : ageGroupId === 1 ? "Under 18" : "35+",
-      },
-      snapshot_date: latestSnapshot.created_at,
-    });
-  } catch (error: any) {
-    console.error("Get Radar Data Error:", error);
-    next(error); // التمرير للـ Global Error Handler
-  }
-};
-
-// ==========================================
-// 3.6: Progress Tracking (CR-16 fixed)
-// ==========================================
-//validated
-export const getProgress = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-    const attributeTestId = res.locals.attributeTestId;
-
-    // 1. جلب بيانات الاختبار والـ User والـ Profile بالتوازي لسرعة الأداء
-    const [testInfo, user, profile] = await Promise.all([
-      prisma.attribute_tests.findUnique({ where: { id: attributeTestId } }),
-      prisma.users.findUnique({
-        where: { id: userId },
-        select: { date_of_birth: true },
-      }),
-      prisma.user_sport_profiles.findFirst({
-        where: { user_id: userId, is_primary: true },
-      }),
-    ]);
-
-    // 🎯 حالة الـ Sad Path: الاختبار مش موجود في الداتا بيز (ترد 404)
-    if (!testInfo) {
-      res.status(404).json({
-        success: false,
-        error: "attribute_test not found.", // مطابقة للـ Assertion في الـ Sheet
-      });
-      return;
-    }
-
-    if (!user || !profile) {
-      res.status(404).json({
-        success: false,
-        error: "Sport profile or user record not found.",
-      });
-      return;
-    }
-
-    const ageGroupId = getAgeGroupId(user.date_of_birth);
-    const userLevel = profile.level;
-    const userWeight = profile.weight_class;
-    const higherIsBetter = testInfo.higher_is_better ?? true;
-
-    // 2. جلب جميع الـ Snapshots اللي فيها الـ Test ده للاعب (مرتبة تصاعدياً بالأقدم ASC)
-    const history = await prisma.physical_snapshots.findMany({
-      where: {
-        user_id: userId,
-        snapshot_test_values: { some: { attribute_test_id: attributeTestId } },
-      },
-      orderBy: { created_at: "asc" },
-      include: {
-        snapshot_test_values: {
-          where: { attribute_test_id: attributeTestId },
-          take: 1,
-        },
-      },
-    });
-
-    // 🎯 حالة الـ Sad Path: الاختبار موجود بس اللاعب منزلوش أي داتا (ترد 200 مع Array فاضية)
-    if (history.length === 0) {
-      res.status(200).json({
-        test_name: testInfo.test_name,
-        unit: testInfo.unit,
-        higher_is_better: higherIsBetter,
-        data_points: [], // الـ Sheet طالبة يرجع الـ Object صريح وجواه مصفوفة فاضية
-      });
-      return;
-    }
-
-    // 3. بناء الـ Data Points وحساب الـ Percentiles بشكل ديناميكي لكل سجل
-    const data_points = await Promise.all(
-      history.map(async (snap) => {
-        const testValueRecord = snap.snapshot_test_values[0];
-        const rawValue = testValueRecord ? Number(testValueRecord.value) : 0;
-
-        const { percentile } = await getPercentileWithFallback(
-          attributeTestId,
-          rawValue,
-          higherIsBetter,
-          userLevel,
-          userWeight,
-          ageGroupId,
-        );
-
-        return {
-          date: snap.created_at,
-          raw_value: rawValue,
-          percentile: Math.round(percentile),
-          snapshot_type: snap.snapshot_type,
+        const metricsData = {
+            height_cm: Number(height_cm),
+            weight_kg: Number(weight_kg),
+            goal: goal as user_goal_enum,
+            training_days_per_week: Number(training_days_per_week),
+            years_training: Number(years_training),
+            has_injury_history: has_injury_history ?? false,
+            endurance_score: endurance_score ? Number(endurance_score) : 5,
+            strength_score: strength_score ? Number(strength_score) : 5,
+            speed_score: speed_score ? Number(speed_score) : 5,
+            flexibility_score: flexibility_score ? Number(flexibility_score) : 5,
+            explosiveness_score: explosiveness_score ? Number(explosiveness_score) : 5,
+            recovery_score: recovery_score ? Number(recovery_score) : 5,
         };
-      }),
-    );
 
-    // 🎯 الـ Response النهائي: الـ Object في الـ Root مباشرة لمطابقة الـ Assertion بالملي!
-    res.status(200).json({
-      test_name: testInfo.test_name,
-      unit: testInfo.unit,
-      higher_is_better: higherIsBetter,
-      data_points,
-    });
-  } catch (error: any) {
-    console.error("Get Progress Error:", error);
-    next(error); // التمرير للـ Global Error Handler المركزي
-  }
+        const metrics = await prisma.user_metrics.upsert({
+            where: { user_id: userId },
+            update: metricsData,
+            create: { user_id: userId, ...metricsData }
+        });
+
+        res.status(200).json({ success: true, message: "User metrics saved successfully!", data: metrics });
+    } catch (error: any) {
+        console.error("Upsert User Metrics Error:", error);
+        return next(new AppError("Failed to save user metrics.", 500));
+    }
+};
+export const getUserMetrics = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+
+        const metrics = await prisma.user_metrics.findUnique({
+            where: { user_id: userId }
+        });
+
+        if (!metrics) {
+            // لو مفيش Metrics، بنرجع 404 عشان الفرونت إند يعرف إنه لازم يوديه لشاشة الـ Onboarding
+            return next(new AppError("User metrics not found. Please complete onboarding.", 404));
+        }
+
+        res.status(200).json({ success: true, data: metrics });
+    } catch (error: any) {
+        console.error("Get User Metrics Error:", error);
+        return next(new AppError("Failed to fetch user metrics.", 500));
+    }
+};
+export const updateSportProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { level, weight_class } = req.body;
+
+        const existingProfile = await prisma.user_sport_profiles.findFirst({
+            where: { user_id: userId, is_primary: true }
+        });
+
+        if (!existingProfile) {
+            return next(new AppError("Sport profile not found. Please create one first.", 404));
+        }
+
+        const updatedProfile = await prisma.user_sport_profiles.update({
+            where: { id: existingProfile.id },
+            data: { ...(level && { level }), ...(weight_class && { weight_class }) }
+        });
+
+        res.status(200).json({ success: true, message: "Sport profile updated successfully!", data: updatedProfile });
+    } catch (error: any) {
+        console.error("Update Sport Profile Error:", error);
+        return next(new AppError("Failed to update sport profile.", 500));
+    }
 };
 
-// ==========================================
-// 3.7: Enrollments
-// ==========================================
+export const createSnapshot = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { sport_id = 1, snapshot_type = 'manual_update', program_enrollment_id, notes, test_values } = req.body;
 
-export const getMyEnrollments = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-    const statusFilter = res.locals.statusFilter as
-      | enrollment_status
-      | undefined;
+        // 🎯 التعديل الأول: التأكد من إن الـ Sport موجود عشان نعدي تيستاية الـ 404
+        const sportExists = await prisma.sports.findUnique({
+            where: { id: Number(sport_id) }
+        });
 
-    // بناء الـ Filter بشكل ديناميكي وآمن
-    const whereClause: any = { user_id: userId };
-    if (statusFilter) {
-      whereClause.status = statusFilter;
+        if (!sportExists) {
+            return next(new AppError("Sport not found. Please provide a valid sport_id.", 404));
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. إنشاء الـ Snapshot الأساسية
+            const snapshot = await tx.physical_snapshots.create({
+                data: { user_id: userId, sport_id: Number(sport_id), snapshot_type, program_enrollment_id, notes }
+            });
+
+            // 2. تجهيز معلومات الـ Tests عشان نجيب الـ Unit
+            const testIds = test_values.map((t: any) => t.attribute_test_id);
+            const testsInfo = await tx.attribute_tests.findMany({ where: { id: { in: testIds } } });
+
+            const dataToInsert = test_values.map((test: any) => {
+                const info = testsInfo.find(ti => ti.id === test.attribute_test_id);
+                return {
+                    snapshot_id: snapshot.id,
+                    attribute_test_id: test.attribute_test_id,
+                    value: test.value,
+                    unit: info?.unit || 'unknown'
+                };
+            });
+
+            // 3. حفظ قيم الـ Tests المرفقة بالـ Snapshot
+            await tx.snapshot_test_values.createMany({ data: dataToInsert });
+
+            // 🎯 التعديل التاني: ربط الـ Snapshot بجدول الـ Enrollments عشان نعدي تيستاية الـ Program baseline
+            if (program_enrollment_id) {
+                if (snapshot_type === 'program_baseline') {
+                    await tx.enrollments.update({
+                        where: { id: program_enrollment_id },
+                        data: { baseline_snapshot_id: snapshot.id }
+                    });
+                } else if (snapshot_type === 'program_posttest') {
+                    await tx.enrollments.update({
+                        where: { id: program_enrollment_id },
+                        data: { posttest_snapshot_id: snapshot.id }
+                    });
+                }
+            }
+
+            return snapshot;
+        });
+
+        res.status(201).json({ success: true, message: "Snapshot saved!", snapshot_id: result.id });
+    } catch (error: any) {
+        console.error("Create Snapshot Error:", error);
+
+        // 🎯 تعديل إضافي عشان لو حصلت مشكلة Prisma يبعتها للـ Global Error Handler بتاعك
+        if (error.code) {
+            return next(error);
+        }
+
+        return next(new AppError("Failed to save snapshot", 500));
     }
-
-    // جلب الاشتراكات مع بيانات البرنامج والمدرب
-    const enrollments = await prisma.enrollments.findMany({
-      where: whereClause,
-      orderBy: { created_at: "desc" },
-      include: {
-        programs: {
-          select: {
-            title: true,
-            duration_weeks: true,
-            cover_image: true,
-            users: { select: { username: true } }, // الـ Coach
-          },
-        },
-      },
-    });
-
-    // 🎯 حالة الـ No enrollments yet: ترجع Array فاضية صريحة [] مع status 200
-    if (!enrollments || enrollments.length === 0) {
-      res.status(200).json([]);
-      return;
-    }
-
-    // 🎯 عمل Mapping للمصفوفة لتكون Flat (مفرودة) تماماً زي طلب الـ Sheet بالملي
-    const formattedEnrollments = enrollments.map((e) => ({
-      enrollment_id: e.id,
-      status: e.status,
-      start_date: e.start_date,
-      completed_date: e.completed_date || null, // بتظهر لو الحالة completed
-      program_title: e.programs?.title || "Unknown Program",
-      coach_name: e.programs?.users?.username || "Unknown Coach",
-      cover_image: e.programs?.cover_image || null,
-      duration_weeks: e.programs?.duration_weeks || 0,
-      baseline_snapshot_id: e.baseline_snapshot_id || null, // مطلوبة في الـ Sheet
-    }));
-
-    // 🎯 إرجاع الـ Array مباشرة في الـ Root بدون غلاف الـ data
-    res.status(200).json(formattedEnrollments);
-  } catch (error: any) {
-    console.error("Get Enrollments Error:", error);
-    next(error); // التمرير الفوري للـ Global Error Handler المركزي
-  }
 };
 
-export const upsertUserMetrics = async (
-  req: AuthRequest,
-  res: Response,
-): Promise<void> => {
-  try {
-    const userId = req.user?.sub as string;
-    const {
-      height_cm,
-      weight_kg,
-      goal,
-      training_days_per_week,
-      years_training,
-      has_injury_history,
-      endurance_score,
-      strength_score,
-      speed_score,
-      flexibility_score,
-      explosiveness_score,
-      recovery_score,
-    } = req.body;
+export const getSnapshots = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const limit = parseInt(req.query.limit as string) || 20;
+        const offset = parseInt(req.query.offset as string) || 0;
+        const type = req.query.type as unknown as snapshot_type | undefined;
 
-    // Validation أساسي للحقول الإجبارية
-    if (
-      !height_cm ||
-      !weight_kg ||
-      !goal ||
-      training_days_per_week === undefined ||
-      years_training === undefined
-    ) {
-      res.status(400).json({
-        success: false,
-        error:
-          "Missing required fields: height_cm, weight_kg, goal, training_days_per_week, and years_training are required.",
-      });
-      return;
+        const whereClause: any = { user_id: userId };
+        if (type) whereClause.snapshot_type = type;
+
+        const totalCount = await prisma.physical_snapshots.count({ where: whereClause });
+        const snapshots = await prisma.physical_snapshots.findMany({
+            where: whereClause,
+            take: limit, skip: offset,
+            orderBy: { created_at: 'desc' },
+            include: { snapshot_test_values: { include: { attribute_tests: { select: { test_name: true } } } } }
+        });
+
+        const formattedSnapshots = snapshots.map(snap => ({
+            id: snap.id, snapshot_type: snap.snapshot_type, created_at: snap.created_at, notes: snap.notes,
+            test_values: snap.snapshot_test_values.map(tv => ({
+                attribute_test_id: tv.attribute_test_id, test_name: tv.attribute_tests?.test_name, value: tv.value, unit: tv.unit
+            }))
+        }));
+
+        res.status(200).json({ success: true, data: formattedSnapshots, meta: { total: totalCount, limit, offset } });
+    } catch (error: any) {
+        console.error("Get Snapshots Error:", error);
+        return next(new AppError("Failed to fetch snapshots.", 500));
     }
+};
+export const getRadarData = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const cohortLevel = req.query.level as unknown as competitive_level | undefined;
+        const cohortWeight = req.query.weight_class as unknown as weight_class | undefined;
 
-    // التأكد إن الهدف المبعوت موجود في الـ Enum
-    const validGoals = Object.keys(user_goal_enum);
-    if (!validGoals.includes(goal)) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid goal. Allowed values are: ${validGoals.join(", ")}`,
-      });
-      return;
+        const user = await prisma.users.findUnique({
+            where: { id: userId },
+            select: { date_of_birth: true, user_sport_profiles: { where: { is_primary: true } } }
+        });
+        const profile = user?.user_sport_profiles[0];
+
+        if (!profile) {
+            return next(new AppError("Profile not found.", 404));
+        }
+
+        const ageGroupId = getAgeGroupId(user!.date_of_birth);
+        const targetLevel = cohortLevel || profile.level;
+        const targetWeight = cohortWeight || profile.weight_class;
+
+        const latestSnapshot = await prisma.physical_snapshots.findFirst({
+            where: { user_id: userId },
+            orderBy: { created_at: 'desc' },
+            include: { snapshot_test_values: { include: { attribute_tests: { include: { sport_attributes: true } } } } }
+        });
+
+        // 🎯 التعديل هنا: خلينا الرسالة تطابق الـ Test Description بتاعك بالملي
+        if (!latestSnapshot) {
+            return next(new AppError("No snapshot data found.", 404));
+        }
+
+        const attributeMap = new Map<number, { name: string; tests: any[]; totalWeight: number }>();
+        for (const testVal of latestSnapshot.snapshot_test_values) {
+            const attr = testVal.attribute_tests?.sport_attributes;
+            if (!attr) continue;
+            const attrId = attr.id;
+            if (!attributeMap.has(attrId)) attributeMap.set(attrId, { name: attr.name, tests: [], totalWeight: 0 });
+
+            const entry = attributeMap.get(attrId)!;
+            const weight = Number(testVal.attribute_tests?.weight || 1);
+
+            entry.tests.push({
+                testId: testVal.attribute_test_id, rawValue: Number(testVal.value),
+                higherIsBetter: testVal.attribute_tests?.higher_is_better ?? true, weight: weight, unit: testVal.unit
+            });
+            entry.totalWeight += weight;
+        }
+
+        const radar_axes: any[] = [];
+        let foundationPct = 0, acceleratorPct = 0, transferPct = 0;
+
+        for (const [attrId, attrData] of attributeMap.entries()) {
+            let weightedPercentileSum = 0;
+            let highestFallback = 0;
+
+            for (const test of attrData.tests) {
+                const { percentile, fallbackLevel } = await getPercentileWithFallback(test.testId, test.rawValue, test.higherIsBetter, targetLevel, targetWeight, ageGroupId);
+                weightedPercentileSum += percentile * test.weight;
+                if (fallbackLevel > highestFallback) highestFallback = fallbackLevel;
+
+                const testName = await getTestName(test.testId);
+                if (testName === 'Trap Bar Deadlift') foundationPct = percentile;
+                if (testName === 'Power Clean' || testName === 'Box Jump Height') acceleratorPct = percentile;
+                if (testName === 'Medicine Ball Rotational Throw') transferPct = percentile;
+            }
+
+            const finalPercentile = attrData.totalWeight > 0 ? weightedPercentileSum / attrData.totalWeight : 0;
+            radar_axes.push({ attribute_name: attrData.name, percentile: Math.round(finalPercentile), fallback_level: highestFallback });
+        }
+
+        const punch_power = {
+            score: calculatePunchPower(foundationPct, acceleratorPct, transferPct),
+            foundation: { percentile: foundationPct }, accelerator: { percentile: acceleratorPct }, transfer: { percentile: transferPct }
+        };
+
+        res.status(200).json({
+            success: true,
+            data: {
+                radar_axes, punch_power,
+                cohort_used: { weight_class: targetWeight, level: targetLevel, age_group: ageGroupId === 2 ? '18-35' : (ageGroupId === 1 ? 'Under 18' : '35+') },
+                snapshot_date: latestSnapshot.created_at
+            }
+        });
+
+    } catch (error: any) {
+        console.error("Get Radar Data Error:", error);
+        return next(new AppError("Failed to generate radar data", 500));
     }
+};
+export const getProgress = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const attributeTestId = parseInt(req.query.attribute_test_id as string);
+        if (isNaN(attributeTestId)) {
+            return next(new AppError("Invalid test ID.", 400));
+        }
 
-    // تجهيز الداتا عشان نستخدمها في الـ Create والـ Update
-    const metricsData = {
-      height_cm: Number(height_cm),
-      weight_kg: Number(weight_kg),
-      goal: goal as user_goal_enum,
-      training_days_per_week: Number(training_days_per_week),
-      years_training: Number(years_training),
-      has_injury_history: has_injury_history ?? false,
-      // التقييمات لو مبعتتش هنحط الديفولت بتاعها 5 زي الداتا بيز
-      endurance_score: endurance_score ? Number(endurance_score) : 5,
-      strength_score: strength_score ? Number(strength_score) : 5,
-      speed_score: speed_score ? Number(speed_score) : 5,
-      flexibility_score: flexibility_score ? Number(flexibility_score) : 5,
-      explosiveness_score: explosiveness_score
-        ? Number(explosiveness_score)
-        : 5,
-      recovery_score: recovery_score ? Number(recovery_score) : 5,
-    };
+        const [testInfo, user, profile] = await Promise.all([
+            prisma.attribute_tests.findUnique({ where: { id: attributeTestId } }),
+            prisma.users.findUnique({ where: { id: userId }, select: { date_of_birth: true } }),
+            prisma.user_sport_profiles.findFirst({ where: { user_id: userId, is_primary: true } })
+        ]);
 
-    const metrics = await prisma.user_metrics.upsert({
-      where: { user_id: userId },
-      update: metricsData,
-      create: {
-        user_id: userId,
-        ...metricsData,
-      },
-    });
+        if (!testInfo || !profile || !user) {
+            return next(new AppError("Data not found.", 404));
+        }
 
-    res.status(200).json({
-      success: true,
-      message: "User metrics saved successfully!",
-      data: metrics,
-    });
-  } catch (error: any) {
-    console.error("Upsert User Metrics Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to save user metrics." });
-  }
+        const ageGroupId = getAgeGroupId(user.date_of_birth);
+        const userLevel = profile.level;
+        const userWeight = profile.weight_class;
+        const higherIsBetter = testInfo.higher_is_better ?? true;
+
+        const history = await prisma.physical_snapshots.findMany({
+            where: { user_id: userId, snapshot_test_values: { some: { attribute_test_id: attributeTestId } } },
+            orderBy: { created_at: 'asc' },
+            include: { snapshot_test_values: { where: { attribute_test_id: attributeTestId }, take: 1 } }
+        });
+
+        const data_points = await Promise.all(history.map(async (snap) => {
+            const rawValue = Number(snap.snapshot_test_values[0]?.value || 0);
+            const { percentile } = await getPercentileWithFallback(attributeTestId, rawValue, higherIsBetter, userLevel, userWeight, ageGroupId);
+            return { date: snap.created_at, raw_value: rawValue, snapshot_type: snap.snapshot_type, percentile: Math.round(percentile) };
+        }));
+
+        res.status(200).json({ success: true, data: { test_name: testInfo.test_name, unit: testInfo.unit, higher_is_better: higherIsBetter, data_points } });
+    } catch (error: any) {
+        console.error("Get Progress Error:", error);
+        return next(new AppError("Failed to fetch progress.", 500));
+    }
+};
+
+export const getMyEnrollments = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const status = req.query.status as enrollment_status | undefined;
+
+        const whereClause: any = { user_id: userId };
+        if (status) whereClause.status = status;
+
+        const enrollments = await prisma.enrollments.findMany({
+            where: whereClause,
+            orderBy: { created_at: 'desc' },
+            include: { programs: { select: { title: true, goal_primary: true, duration_weeks: true, cover_image: true, users: { select: { username: true } } } } }
+        });
+
+        const formatted = enrollments.map(e => ({
+            id: e.id, status: e.status, start_date: e.start_date, completed_date: e.completed_date,
+            program: { title: e.programs.title, goal: e.programs.goal_primary, duration: e.programs.duration_weeks, cover: e.programs.cover_image, coach: e.programs.users.username }
+        }));
+
+        res.status(200).json({ success: true, data: formatted });
+    } catch (error: any) {
+        console.error("Get Enrollments Error:", error);
+        return next(new AppError("Failed to fetch enrollments.", 500));
+    }
+};
+// --- جلب بروفايلات الرياضة ---
+export const getSportProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+
+        const profiles = await prisma.user_sport_profiles.findMany({
+            where: { user_id: userId },
+            orderBy: { is_primary: 'desc' }, // هيجيب الأساسي أول واحد
+            include: { sports: { select: { name: true } } }
+        });
+
+        res.status(200).json({ success: true, data: profiles });
+    } catch (error: any) {
+        console.error("Get Sport Profile Error:", error);
+        return next(new AppError("Failed to fetch sport profiles.", 500));
+    }
+};
+
+// --- مسح بروفايل رياضي ---
+export const deleteSportProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const profileId = req.params.id;
+
+        const profile = await prisma.user_sport_profiles.findUnique({ where: { id: profileId as any } });
+
+        if (!profile) return next(new AppError("Sport profile not found.", 404));
+        if (profile.user_id !== userId) return next(new AppError("Forbidden — You can only delete your own profile.", 403));
+
+        await prisma.user_sport_profiles.delete({ where: { id: profileId as any } });
+
+        res.status(200).json({ success: true, message: "Sport profile deleted successfully." });
+    } catch (error: any) {
+        console.error("Delete Sport Profile Error:", error);
+        return next(new AppError("Failed to delete sport profile.", 500));
+    }
+};
+
+// --- مسح القياسات الجسدية للمستخدم ---
+export const deleteUserMetrics = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+
+        const metrics = await prisma.user_metrics.findUnique({ where: { user_id: userId } });
+        if (!metrics) return next(new AppError("User metrics not found.", 404));
+
+        await prisma.user_metrics.delete({ where: { user_id: userId } });
+
+        res.status(200).json({ success: true, message: "User metrics deleted successfully." });
+    } catch (error: any) {
+        console.error("Delete User Metrics Error:", error);
+        return next(new AppError("Failed to delete user metrics.", 500));
+    }
+};
+
+// --- مسح قياس (Snapshot) معين ---
+export const deleteSnapshot = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const snapshotId = req.params.id;
+
+        const snapshot = await prisma.physical_snapshots.findUnique({ where: { id: snapshotId as any } });
+
+        if (!snapshot) return next(new AppError("Snapshot not found.", 404));
+        if (snapshot.user_id !== userId) return next(new AppError("Forbidden — You can only delete your own snapshot.", 403));
+
+        await prisma.physical_snapshots.delete({ where: { id: snapshotId as any } });
+
+        res.status(200).json({ success: true, message: "Snapshot deleted successfully." });
+    } catch (error: any) {
+        console.error("Delete Snapshot Error:", error);
+        return next(new AppError("Failed to delete snapshot.", 500));
+    }
 };

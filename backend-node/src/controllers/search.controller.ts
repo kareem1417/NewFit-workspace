@@ -1,45 +1,28 @@
-import { Response } from "express";
+import { Response, NextFunction } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
-import { prisma } from "../config/prisma"; // ✅ shared singleton
+import { prisma } from "../config/prisma";
+import { AppError } from "../utils/AppError";
 
 // --- 6.1 Search ---
 export const search = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const q = req.query.q as string;
     const type = (req.query.type as string) || "all";
-    // Validation & Fallback for Pagination (تأمين ضد الـ NaN والأرقام السالبة)
     const limit = Math.max(1, parseInt(req.query.limit as string) || 20);
     const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
 
-    // Strict Validation for 'type' Query Parameter (Sad Path: SP-04)
-    const allowedTypes = ["all", "users", "programs", "posts"];
-    if (!allowedTypes.includes(type)) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid type provided. Allowed types are: ${allowedTypes.join(", ")}`,
-      });
-      return;
-    }
-
-    if (!q || q.trim() === "") {
-      res
-        .status(200)
-        .json({ success: true, data: { users: [], programs: [], posts: [] } });
-      return;
-    }
-
     // 1. Sanitize and prepare search query (TSQuery format)
-    // Remove symbols that break tsquery and join words with & (AND)
     const sanitizedQ = q
       .replace(/[&|!:*()]/g, "")
       .trim()
       .split(/\s+/)
       .join(" & ");
 
-    // If after sanitization the query becomes empty (user sent only "!!!")
+    // If after sanitization the query becomes empty (e.g., user sent only "!!!")
     if (!sanitizedQ) {
       res
         .status(200)
@@ -97,29 +80,17 @@ export const search = async (
     res.status(200).json({ success: true, data: results });
   } catch (error: any) {
     console.error("Search Error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to perform search due to an internal server error.",
-    });
+    next(new AppError("Failed to perform search due to an internal server error.", 500));
   }
 };
-// Temporary function to update Search Vectors in the database
+
+// --- 6.2 Sync Search Vectors (Admin Only) ---
 export const syncSearchVectors = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction,
 ): Promise<void> => {
   try {
-    // 1. Role-Based Access Control (RBAC) Validation (Sad Path: SP-03)
-    // بنضمن إن الـ Sync للأدمن فقط، لأنها عملية حاسمة ومستهلكة لموارد الـ DB
-    if (!req.user || req.user.role !== "ADMIN") {
-      res.status(403).json({
-        success: false,
-        error:
-          "Access denied. Only system administrators can synchronize search vectors.",
-      });
-      return;
-    }
-
     await prisma.$executeRaw`UPDATE users SET search_vector = to_tsvector('english', coalesce(username, '') || ' ' || coalesce(bio, ''))`;
     await prisma.$executeRaw`UPDATE programs SET search_vector = to_tsvector('english', coalesce(title, '') || ' ' || coalesce(description, ''))`;
     await prisma.$executeRaw`UPDATE posts SET search_vector = to_tsvector('english', coalesce(content, ''))`;
@@ -131,10 +102,6 @@ export const syncSearchVectors = async (
     });
   } catch (error) {
     console.error("Sync Search Vectors Error:", error);
-    res.status(500).json({
-      success: false,
-      error:
-        "Failed to synchronize search vectors due to a database backend failure.",
-    });
+    next(new AppError("Failed to synchronize search vectors due to a database backend failure.", 500));
   }
 };

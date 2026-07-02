@@ -1,13 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { ValidationError } from "express-validator";
-
-// 🎯 تحديث الـ Interface عشان الـ TS يفهم الخصائص الإضافية للأخطاء الجاية من الرفع
-interface AppError extends Error {
-  statusCode?: number;
-  isOperational?: boolean;
-  http_code?: number; // لقط الخطأ الجاي من Cloudinary
-  code?: string; // لقط كود الخطأ الجاي من Multer/Uploader زي LIMIT_FILE_SIZE
-}
+import { AppError } from "../utils/AppError";
 
 export const errorHandler = (
   err: any, // تحويلها لـ any هنا بيسهل التعامل مع الأخطاء الجاية من مكاتب خارجية مختلفة
@@ -61,7 +54,15 @@ export const errorHandler = (
     });
   }
 
-  // 5. Custom operational error (لو حابب تفعلها مستقبلاً)
+  // 5. Operational errors thrown via AppError
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err.message,
+    });
+  }
+
+  // 5b. Legacy operational errors (manual error.isOperational pattern)
   if (err.isOperational) {
     return res.status(err.statusCode || 400).json({
       success: false,

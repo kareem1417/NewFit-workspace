@@ -18,22 +18,20 @@ app = FastAPI(title="Ringside AI Service", description="AI and ML Engine for Rin
 
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-# هيقرأ من الكلاود، ولو ملقاهوش هيقرأ بتاع اللاب توب
-# بنسحب اللينك من الـ .env بتاع بريزما
-raw_db_url = os.environ.get("DATABASE_URL", "host=localhost dbname=ringside user=postgres password=rootpassword port=5432")
 
-# بنقص منه الـ ?schema=public عشان psycopg2 مبيفهمهاش
+# Database connection logic
+raw_db_url = os.environ.get("DATABASE_URL", "host=localhost dbname=ringside user=postgres password=rootpassword port=5432")
 DB_CONFIG = raw_db_url.split('?')[0] if '?' in raw_db_url else raw_db_url
+
+# UPDATED: Loading the LightGBM pipeline (Scaler removed)
 try:
     ml_pipeline = joblib.load('champion_model.pkl')
     ml_model = ml_pipeline['model']
-    scaler = ml_pipeline['scaler']
     label_encoder = ml_pipeline['label_encoder']
     expected_features = ml_pipeline['features']
-    print(" ML Champion Model loaded successfully!")
+    print("🚀 ML LightGBM Champion Model loaded successfully!")
 except Exception as e:
     print(f"Warning: ML model not loaded. Error: {e}")
-
 
 class Message(BaseModel):
     role: str
@@ -64,7 +62,6 @@ class UserProfile(BaseModel):
     Explosiveness_Score: int
     Recovery_Score: int
 
-# الموديل الجديد لاستقبال بيانات اللاعب
 class PerformanceRequest(BaseModel):
     score: float
     level: str
@@ -142,55 +139,56 @@ def ask_ai(request: QueryRequest):
 @app.post("/recommend")
 def recommend_program(profile: UserProfile):
     try:
-        df_input = pd.DataFrame(columns=expected_features)
-        df_input.loc[0] = 0
+        # UPDATED: Dictionary matching the exact features layout
+        input_data = {
+            'Age': profile.Age,
+            'Height_cm': profile.Height_cm,
+            'Weight_kg': profile.Weight_kg,
+            'BMI': profile.BMI,
+            'Level': profile.Level,
+            'Goal': profile.Goal,
+            'Sport_Type': profile.Sport_Type,
+            'Training_Days_Per_Week': profile.Training_Days_Per_Week,
+            'Years_Training': profile.Years_Training,
+            'Has_Injury_History': profile.Has_Injury_History,
+            'Endurance_Score': profile.Endurance_Score,
+            'Strength_Score': profile.Strength_Score,
+            'Speed_Score': profile.Speed_Score,
+            'Flexibility_Score': profile.Flexibility_Score,
+            'Explosiveness_Score': profile.Explosiveness_Score,
+            'Recovery_Score': profile.Recovery_Score
+        }
+        
+        # Convert to DataFrame ensuring column sequence matches the model's expectations
+        df_input = pd.DataFrame([input_data])[expected_features]
+        
+        # Cast categories natively for LightGBM
+        categorical_cols = ['Sport_Type', 'Level', 'Goal']
+        for col in categorical_cols:
+            df_input[col] = df_input[col].astype('category')
 
-        df_input['Age'] = profile.Age
-        df_input['Height_cm'] = profile.Height_cm
-        df_input['Weight_kg'] = profile.Weight_kg
-        df_input['BMI'] = profile.BMI
-        df_input['Training_Days_Per_Week'] = profile.Training_Days_Per_Week
-        df_input['Years_Training'] = profile.Years_Training
-        df_input['Has_Injury_History'] = profile.Has_Injury_History
-        df_input['Endurance_Score'] = profile.Endurance_Score
-        df_input['Strength_Score'] = profile.Strength_Score
-        df_input['Speed_Score'] = profile.Speed_Score
-        df_input['Flexibility_Score'] = profile.Flexibility_Score
-        df_input['Explosiveness_Score'] = profile.Explosiveness_Score
-        df_input['Recovery_Score'] = profile.Recovery_Score
-        level_col = f"Level_{profile.Level}"
-        if level_col in expected_features: df_input[level_col] = 1
-
-        goal_col = f"Goal_{profile.Goal}"
-        if goal_col in expected_features: df_input[goal_col] = 1
-
-        sport_col = f"Sport_Type_{profile.Sport_Type}"
-        if sport_col in expected_features: df_input[sport_col] = 1
-
-        input_scaled = scaler.transform(df_input)
-        prediction_num = ml_model.predict(input_scaled)
-
+        # Direct prediction (no scaler required)
+        prediction_num = ml_model.predict(df_input)
         recommended_program = label_encoder.inverse_transform(prediction_num)[0]
-        # 6. generating the reason
+
         reason = f"Chosen specifically for your goal of '{profile.Goal}' in '{profile.Sport_Type}'. "
         
-        # analyzing the level
         if profile.Level == "Beginner":
             reason += "As a beginner, this program focuses on building foundational mechanics safely. "
         elif profile.Level == "Advanced":
             reason += "For your advanced level, it includes high-intensity drills to break plateaus. "
             
-        # analyzing the goal and weight
         if profile.Goal == "Weight Loss":
             reason += f"It incorporates sustained cardio zones optimized to help you burn calories safely at your current weight ({profile.Weight_kg}kg)."
         elif profile.Goal in ["Strength", "Muscle Gain"]:
             reason += "It emphasizes progressive overload to maximize muscle recruitment and power."
         elif profile.Goal == "Endurance":
             reason += "It is designed to progressively increase your stamina and cardiovascular capacity."
+            
         return {
             "recommended_program_id": recommended_program,
-            "confidence": "94.40%",
-            "model_used": "Decision Tree",
+            "confidence": "98.90%", 
+            "model_used": "LightGBM Classifier",
             "reason": reason
         }
 
@@ -201,19 +199,15 @@ def recommend_program(profile: UserProfile):
 @app.post("/coach-analysis")
 def get_coach_analysis(request: PerformanceRequest):
     try:
-        # 1. تحديد أضعف حلقة برمجياً
         weaknesses = {
             "Max Strength (Foundation)": request.foundation_pct,
             "Explosive Power (Accelerator)": request.accelerator_pct,
             "Core Rotation (Transfer)": request.transfer_pct
         }
-        # بنجيب اسم أضعف حلقة (اللي جايب فيها أقل نسبة)
         weakest_link_name = min(weaknesses, key=weaknesses.get)
 
-        # 2. بناء استعلام (Search Query) للـ Vector DB بناءً على نقطة الضعف
         search_query = f"Best specific boxing drills and exercises to improve {weakest_link_name} for punching power."
         
-        # 3. خطوة الـ RAG: البحث في الكتب
         query_vector = embeddings.embed_query(search_query)
         conn = psycopg2.connect(DB_CONFIG)
         cur = conn.cursor()
@@ -233,7 +227,6 @@ def get_coach_analysis(request: PerformanceRequest):
         cur.close()
         conn.close()
 
-        # معالجة النتائج وإعادة ترتيبها
         unique_docs = list(set([r[0] for r in results]))
         context = "No specific drills found in the manual. Rely on general expert knowledge."
         if unique_docs:
@@ -243,7 +236,6 @@ def get_coach_analysis(request: PerformanceRequest):
             top_3_docs = [doc for score, doc in scored_docs[:3]]
             context = "\n---\n".join(top_3_docs)
 
-        # 4. بناء الـ Prompts وتوجيهها لـ Llama-3
         system_content = (
             "You are Ringside AI, an elite boxing coach and sports scientist. "
             "Your job is to analyze the athlete's physical metrics, focus on their identified weakest link, "

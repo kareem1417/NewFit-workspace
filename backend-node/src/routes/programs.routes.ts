@@ -93,8 +93,9 @@ router.delete("/:id", authenticateToken, deleteProgram);
 // 🎯 جلب البرامج التي سجل فيها اللاعب الحالي: GET /my_enrolled
 router.get(
   "/my_enrolled",
-  authenticateToken, // الـ Middleware اللي بيشفر الـ Token ويطلع الـ userId
+  authenticateToken,
   getMyEnrolledProgramsValidation,
+  validate, // 👈 التعديل هنا: ضفنا دي!
   getMyEnrolledPrograms,
 );
 

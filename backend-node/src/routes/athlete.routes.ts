@@ -1,88 +1,47 @@
-import { Router } from "express";
+import { Router } from 'express';
+import { authenticateToken } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validation.middleware';
 import {
-  createSportProfile,
-  updateSportProfile,
-  createSnapshot,
-  getSnapshots,
-  getRadarData,
-  getProgress,
-  getMyEnrollments,
-  upsertUserMetrics,
-} from "../controllers/athlete.controller";
-import { authenticateToken } from "../middlewares/auth.middleware";
+    createSportProfile, updateSportProfile, getSportProfile, deleteSportProfile,
+    upsertUserMetrics, getUserMetrics, deleteUserMetrics,
+    createSnapshot, getSnapshots, deleteSnapshot,
+    getRadarData, getProgress, getMyEnrollments
+} from '../controllers/athlete.controller';
 import {
-  createSnapshotValidation,
-  createSportProfileValidation,
-  getMyEnrollmentsValidation,
-  getProgressValidation,
-  getRadarDataValidation,
-  getSnapshotsValidation,
-  updateSportProfileValidation,
-} from "../validators/athlete.validator";
-import { validate } from "../middlewares/validation.middleware";
+    createSportProfileValidation, updateSportProfileValidation, upsertMetricsValidation,
+    createSnapshotValidation, getSnapshotsValidation, radarValidation,
+    progressValidation, getMyEnrollmentsValidation, idParamValidation
+} from '../validators/athlete.validator';
 
 const router = Router();
 
 // ==========================================
-// 1. Sport Profiles // done
+// Sport Profile Routes
 // ==========================================
-router.post(
-  "/sport-profile",
-  authenticateToken,
-  createSportProfileValidation,
-  validate,
-  createSportProfile,
-);
-router.patch(
-  "/sport-profile",
-  authenticateToken,
-  updateSportProfileValidation,
-  validate,
-  updateSportProfile,
-);
+router.get('/profile', authenticateToken, getSportProfile);
+router.post('/profile', authenticateToken, createSportProfileValidation, validate, createSportProfile);
+router.patch('/profile', authenticateToken, updateSportProfileValidation, validate, updateSportProfile);
+router.delete('/profile/:id', authenticateToken, idParamValidation, validate, deleteSportProfile);
 
 // ==========================================
-// 2. Physical Snapshots // done
+// User Metrics Routes
 // ==========================================
-router.post(
-  "/snapshots",
-  authenticateToken,
-  createSnapshotValidation,
-  validate,
-  createSnapshot,
-);
-router.get(
-  "/snapshots",
-  authenticateToken,
-  getSnapshotsValidation,
-  validate,
-  getSnapshots,
-);
+router.get('/metrics', authenticateToken, getUserMetrics);
+router.post('/metrics', authenticateToken, upsertMetricsValidation, validate, upsertUserMetrics);
+router.delete('/metrics', authenticateToken, deleteUserMetrics);
 
 // ==========================================
-// 3. Analytics & Progress Tracking
+// Snapshots Routes
 // ==========================================
-router.get(
-  "/radar",
-  authenticateToken,
-  getRadarDataValidation,
-  validate,
-  getRadarData,
-);
-// router.get('/progress/:attributeTestId', authenticateToken,getProgressValidation,validate, getProgress);
-router.get("/progress", authenticateToken, getProgressValidation, getProgress);
+router.post('/snapshots', authenticateToken, createSnapshotValidation, validate, createSnapshot);
+router.get('/snapshots', authenticateToken, getSnapshotsValidation, validate, getSnapshots);
+router.delete('/snapshots/:id', authenticateToken, idParamValidation, validate, deleteSnapshot);
 
 // ==========================================
-// 4. Program Enrollments
+// Analytics & Enrollments Routes
 // ==========================================
-router.get(
-  "/enrollments",
-  authenticateToken,
-  getMyEnrollmentsValidation,
-  validate,
-  getMyEnrollments,
-);
-
-router.patch("/metrics", authenticateToken, upsertUserMetrics); // new athlete function required for the AI Mode
+router.get('/radar', authenticateToken, radarValidation, validate, getRadarData);
+router.get('/progress', authenticateToken, progressValidation, validate, getProgress);
+router.get('/enrollments', authenticateToken, getMyEnrollmentsValidation, validate, getMyEnrollments);
 
 export default router;

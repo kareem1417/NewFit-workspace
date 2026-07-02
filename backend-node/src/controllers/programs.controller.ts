@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { prisma } from "../config/prisma";
 import { program_goal } from "@prisma/client";
+import { AppError } from "../utils/AppError";
 
 // --- 4.1 Create Program (Coach Only) ---
 // Validated
@@ -34,18 +35,14 @@ export const createProgram = async (
     // 1. فحص وجود الـ Sport في قاعدة البيانات لمنع الـ Foreign Key Constraint
     const targetSportId = Number(sport_id);
     if (!targetSportId || isNaN(targetSportId)) {
-      res
-        .status(400)
-        .json({ error: "Validation error — Invalid or missing sport_id." });
-      return;
+      return next(new AppError("Validation error — Invalid or missing sport_id.", 400));
     }
 
     const sportExists = await prisma.sports.findUnique({
       where: { id: targetSportId },
     });
     if (!sportExists) {
-      res.status(404).json({ error: "Sport not found." });
-      return;
+      return next(new AppError("Sport not found.", 404));
     }
 
     // تحديد القيم النهائية للـ Enums الملعونة بناءً على المبعوث لحمايتها من الـ undefined
@@ -267,17 +264,12 @@ export const getProgramById = async (
 
     // 1. لو البرنامج مش موجود أصلاً في قاعدة البيانات (Non-existent program_id) -> 404
     if (!program) {
-      res.status(404).json({ success: false, error: "Program not found." });
-      return;
+      return next(new AppError("Program not found.", 404));
     }
 
     // 2. 🔥 سيناريو الـ Sad Path المعقد: البرنامج Draft واللاعب بيحاول يدخل عليه
     if (!program.is_published && userRole === "athlete") {
-      res.status(404).json({
-        success: false,
-        error: "Not found — athletes cannot see unpublished programs.", // مطابقة للشيت بالملي
-      });
-      return;
+      return next(new AppError("Not found — athletes cannot see unpublished programs.", 404));
     }
 
     // 3. ترتيب الـ Mapping والـ Formatting المفرود بدون Wrapper
@@ -361,20 +353,12 @@ export const updateProgram = async (
     });
 
     if (!program) {
-      res.status(404).json({
-        success: false,
-        error: "Not found.",
-      });
-      return;
+      return next(new AppError("Not found.", 404));
     }
 
     // 2. فحص الملكية (Coach tries to update another coach's program)
     if (program.coach_id !== coachId) {
-      res.status(403).json({
-        success: false,
-        error: "Forbidden — not program owner.",
-      });
-      return;
+      return next(new AppError("Forbidden — not program owner.", 403));
     }
 
     // 3. التحديث (مع استبعاد الـ program_id لو مبعوث جوه الـ body عشان ميعملش مشاكل مع الـ Prisma)
@@ -423,6 +407,7 @@ export const updateProgram = async (
 export const deleteProgram = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const coachId = req.user?.sub as string;
@@ -432,11 +417,7 @@ export const deleteProgram = async (
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(programId)) {
-      res.status(400).json({
-        success: false,
-        error: "Invalid Program ID format. Must be a valid UUID.",
-      });
-      return;
+      return next(new AppError("Invalid Program ID format. Must be a valid UUID.", 400));
     }
 
     const program = await prisma.programs.findUnique({
@@ -445,15 +426,10 @@ export const deleteProgram = async (
     });
 
     if (!program) {
-      res.status(404).json({ success: false, error: "Program not found." });
-      return;
+      return next(new AppError("Program not found.", 404));
     }
     if (program.coach_id !== coachId) {
-      res.status(403).json({
-        success: false,
-        error: "Forbidden: You can only delete your own programs.",
-      });
-      return;
+      return next(new AppError("Forbidden: You can only delete your own programs.", 403));
     }
 
     const activeEnrollments = await prisma.enrollments.count({
@@ -461,11 +437,7 @@ export const deleteProgram = async (
     });
 
     if (activeEnrollments > 0) {
-      res.status(409).json({
-        success: false,
-        error: "Conflict: Cannot delete a program with active enrollments.",
-      });
-      return;
+      return next(new AppError("Conflict: Cannot delete a program with active enrollments.", 409));
     }
 
     await prisma.programs.delete({ where: { id: programId } });
@@ -477,18 +449,10 @@ export const deleteProgram = async (
     console.error("Delete Program Error:", error);
     // If Prisma fails due to foreign key constraints
     if (error.code === "P2003") {
-      res.status(409).json({
-        success: false,
-        error:
-          "Conflict: Cannot delete this program because it is referenced by other records (e.g., past completed enrollments or history).",
-      });
-      return;
+      return next(new AppError("Conflict: Cannot delete this program because it is referenced by other records (e.g., past completed enrollments or history).", 409));
     }
 
-    res.status(500).json({
-      success: false,
-      error: "An unexpected error occurred while deleting the program.",
-    });
+    next(new AppError("An unexpected error occurred while deleting the program.", 500));
   }
 };
 
@@ -665,11 +629,7 @@ export const enrollInProgram = async (
     });
 
     if (!program) {
-      res.status(404).json({
-        success: false,
-        error: "Program not found or not published.",
-      });
-      return;
+      return next(new AppError("Program not found or not published.", 404));
     }
 
     // 3. 🎯 فحص الـ Conflict المتطور (الحل الجذري لمنع ضرب الـ Unique Constraint في الـ Database)
@@ -696,11 +656,7 @@ export const enrollInProgram = async (
     });
 
     if (existingEnrollment) {
-      res.status(409).json({
-        success: false,
-        error: "Conflict — already actively enrolled.", // مطابقة للشيت بالملي
-      });
-      return;
+      return next(new AppError("Conflict — already actively enrolled.", 409));
     }
 
     // 4. فحص صحة الـ attribute_test_ids المبعوثة في الـ Array
@@ -719,12 +675,7 @@ export const enrollInProgram = async (
     });
 
     if (testsInfo.length !== [...new Set(testIds)].length) {
-      res.status(404).json({
-        success: false,
-        error:
-          "One or more provided attribute_test_ids are invalid or do not exist.",
-      });
-      return;
+      return next(new AppError("One or more provided attribute_test_ids are invalid or do not exist.", 404));
     }
 
     let testUnits: Record<number, string> = {};
@@ -800,19 +751,11 @@ export const enrollInProgram = async (
   } catch (error: any) {
     // إمساك أخطاء Prisma الـ Unique Constraint كخط دفاع ثانٍ وإرجاع 409 نظيفة
     if (error.code === "P2002") {
-      res.status(409).json({
-        success: false,
-        error: "Conflict — already actively enrolled.",
-      });
-      return;
+      return next(new AppError("Conflict — already actively enrolled.", 409));
     }
 
     if (error.message?.startsWith("VALIDATION_ERROR:")) {
-      res.status(400).json({
-        success: false,
-        error: error.message.replace("VALIDATION_ERROR: ", ""),
-      });
-      return;
+      return next(new AppError(error.message.replace("VALIDATION_ERROR: ", ""), 400));
     }
 
     console.error("Enrollment Error:", error);
@@ -843,24 +786,16 @@ export const completeEnrollment = async (
     });
 
     if (!enrollment) {
-      res.status(404).json({ success: false, error: "Enrollment not found." });
-      return;
+      return next(new AppError("Enrollment not found.", 404));
     }
 
     if (enrollment.user_id !== userId) {
-      res
-        .status(403)
-        .json({ success: false, error: "Forbidden: Not your enrollment." });
-      return;
+      return next(new AppError("Forbidden: Not your enrollment.", 403));
     }
 
     // 2. 🔥 الصد الفوري لسيناريو الـ Sad Path لو الـ Enrollment مش active
     if (enrollment.status !== "active") {
-      res.status(409).json({
-        success: false,
-        error: "Conflict — enrollment is not active.", // مطابقة للشيت بالملي
-      });
-      return;
+      return next(new AppError("Conflict — enrollment is not active.", 409));
     }
 
     // 3. التحقق من الـ attribute_test_ids وصحتها
@@ -871,12 +806,7 @@ export const completeEnrollment = async (
         t.value === undefined ||
         isNaN(Number(t.value))
       ) {
-        res.status(400).json({
-          success: false,
-          error:
-            "Each posttest item must include a valid attribute_test_id and a numerical value.",
-        });
-        return;
+        return next(new AppError("Each posttest item must include a valid attribute_test_id and a numerical value.", 400));
       }
       testIds.push(Number(t.attribute_test_id));
     }
@@ -887,12 +817,7 @@ export const completeEnrollment = async (
     });
 
     if (testsInfo.length !== [...new Set(testIds)].length) {
-      res.status(404).json({
-        success: false,
-        error:
-          "One or more provided attribute_test_ids do not exist in the system.",
-      });
-      return;
+      return next(new AppError("One or more provided attribute_test_ids do not exist in the system.", 404));
     }
 
     let testUnits: Record<number, string> = {};
@@ -1004,20 +929,12 @@ export const rateProgram = async (
     });
 
     if (!anyEnrollment) {
-      res.status(403).json({
-        success: false,
-        error: "Forbidden — no completed enrollment found.", // مطابقة للشيت بالملي
-      });
-      return;
+      return next(new AppError("Forbidden — no completed enrollment found.", 403));
     }
 
     // 2. فحص هل الـ Enrollment لسه active ولم يكتمل بعد
     if (anyEnrollment.status !== "completed") {
-      res.status(403).json({
-        success: false,
-        error: "Forbidden — must complete program first.", // مطابقة للشيت بالملي
-      });
-      return;
+      return next(new AppError("Forbidden — must complete program first.", 403));
     }
 
     // 3. فحص التقييم المزدوج (هل قيم البرنامج ده قبل كدة؟)
@@ -1026,11 +943,7 @@ export const rateProgram = async (
     });
 
     if (existingRating) {
-      res.status(409).json({
-        success: false,
-        error: "Conflict — already rated (unique constraint).", // مطابقة للشيت بالملي
-      });
-      return;
+      return next(new AppError("Conflict — already rated (unique constraint).", 409));
     }
 
     // 4. تنفيذ الـ Transaction لتسجيل التقييم وتحديث إحصائيات البرنامج
@@ -1122,11 +1035,7 @@ export const getMyEnrolledPrograms = async (
 
     // 2. 🎯 الـ Sad Path: لو اللاعب مش مسجل في أي برنامج نهائي في السيستم
     if (!enrollments || enrollments.length === 0) {
-      res.status(404).json({
-        success: false,
-        error: "No enrolled programs found for this user.",
-      });
-      return;
+      return next(new AppError("No enrolled programs found for this user.", 404));
     }
 
     // 3. 🎯 الـ Happy Path: تجهيز الداتا ومطابقتها وتصفيتها بشكل مفرود

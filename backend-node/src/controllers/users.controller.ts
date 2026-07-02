@@ -1,12 +1,14 @@
-import { Response , NextFunction} from "express";
+import { Response, NextFunction } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { prisma } from "../config/prisma";
 import { v2 as cloudinary } from "cloudinary";
+import { AppError } from "../utils/AppError";
 
 // Works without Validator 
 export const deactivateAccount = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
@@ -31,12 +33,12 @@ export const deactivateAccount = async (
     });
   } catch (error) {
     console.error("Deactivate Account Error:", error);
-    res.status(500).json({ success: false, error: "Internal server error" });
+    next(new AppError("Internal server error", 500));
   }
 };
 
 // works good without Validator 
-export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getMe = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
 
@@ -51,11 +53,10 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
     });
 
     if (!user) {
-      res.status(404).json({ success: false, error: "User not found." });
-      return;
+      return next(new AppError("User not found.", 404));
     }
 
-    
+
     const { password_hash, ...safeUserData } = user;
 
     res.status(200).json({
@@ -64,9 +65,7 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
     });
   } catch (error: any) {
     console.error("Get Me Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch user profile." });
+    next(new AppError("Failed to fetch user profile.", 500));
   }
 };
 
@@ -74,11 +73,10 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
 export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    const file = (req as any).file; 
+    const file = (req as any).file;
 
     if (!file) {
-      res.status(400).json({ success: false, error: "Validation error — file required." });
-      return;
+      return next(new AppError("Validation error — file required.", 400));
     }
 
     const photoUrl = file.path;
@@ -91,7 +89,7 @@ export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFun
       }
     }
 
-    
+
     const updatedUser = await prisma.users.update({
       where: { id: userId },
       data: { profile_photo: photoUrl },
@@ -104,31 +102,23 @@ export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFun
 
   } catch (error: any) {
     if (
-      error.message?.includes("format pdf not allowed") || 
+      error.message?.includes("format pdf not allowed") ||
       error.http_code === 400
     ) {
-      res.status(400).json({
-        success: false,
-        error: "Invalid file type — only JPEG, PNG, WEBP accepted."
-      });
-      return;
+      return next(new AppError("Invalid file type — only JPEG, PNG, WEBP accepted.", 400));
     }
 
     if (error.message?.includes("limit") || error.message?.includes("large")) {
-      res.status(400).json({
-        success: false,
-        error: "File size exceeds limit."
-      });
-      return;
+      return next(new AppError("File size exceeds limit.", 400));
     }
 
-    next(error); 
+    next(error);
   }
 };
 
 // Done 
 export const updateMe = async (
-  req: AuthRequest, 
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
@@ -140,10 +130,10 @@ export const updateMe = async (
       const sanitizedUsername = username.trim();
 
       const existingUser = await prisma.users.findFirst({
-        where: { 
+        where: {
           username: {
             equals: sanitizedUsername,
-            mode: 'insensitive' 
+            mode: 'insensitive'
           }
         },
       });
@@ -152,11 +142,7 @@ export const updateMe = async (
 
       if (existingUser) {
         if (existingUser.id !== userId) {
-          res.status(409).json({ 
-            success: false, 
-            error: "Username is already taken." 
-          });
-          return; 
+          return next(new AppError("Username is already taken.", 409));
         }
       }
     }
@@ -165,7 +151,7 @@ export const updateMe = async (
     if (username !== undefined) updateData.username = username.trim(); // حفظ الاسم نضيف
     if (social_links !== undefined) updateData.social_links = social_links;
     if (role_models !== undefined) updateData.role_models = role_models;
-    if (role !== undefined) updateData.role = role; 
+    if (role !== undefined) updateData.role = role;
 
     const updatedUser = await prisma.users.update({
       where: { id: userId },
@@ -267,31 +253,13 @@ export const getPublicProfile = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const targetUserId = req.query.user_id as string; 
-    const requestingUserId = req.user?.sub as string; 
+    const targetUserId = req.query.user_id as string;
+    const requestingUserId = req.user?.sub as string;
 
-    // 1. فحص وجود الـ parameter والرسالة المطلوبة بالملي
-    if (!targetUserId || targetUserId.trim() === "") {
-      res.status(400).json({
-        success: false,
-        error: "Validation error — required param missing.",
-      });
-      return;
-    }
+    // 🎯 مسحنا الـ Validation من هنا لأنه بقى بيتعمل في validator.ts
 
-    // 2. فحص الـ UUID
-    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-    if (!uuidRegex.test(targetUserId)) {
-      res.status(400).json({ 
-        success: false, 
-        error: "Validation error — invalid UUID." 
-      });
-      return;
-    }
-
-    // 🎯 3. حل المشكلة الأولى: شيلنا الـ _count من الكوايري عشان الـ Schema تـ Compile بسلام، وهنحسب الـ Counts تحت
     const targetUser = await prisma.users.findUnique({
-      where: { id: targetUserId }, 
+      where: { id: targetUserId },
       include: {
         user_sport_profiles: {
           where: { is_primary: true },
@@ -301,15 +269,12 @@ export const getPublicProfile = async (
     });
 
     if (!targetUser) {
-      res.status(404).json({ success: false, error: "User not found." });
-      return;
+      return next(new AppError("User not found.", 404));
     }
 
-    // 🎯 4. حساب الـ Counts من جداول الـ Follows والـ Programs بشكل منفصل ومضمون 100%
     const followersCount = await prisma.follows.count({ where: { followee_id: targetUserId } });
     const followingCount = await prisma.follows.count({ where: { follower_id: targetUserId } });
-    
-    // حساب الـ is_following
+
     let is_following = false;
     if (requestingUserId && requestingUserId !== targetUserId) {
       const followRecord = await prisma.follows.findUnique({
@@ -323,14 +288,11 @@ export const getPublicProfile = async (
       is_following = !!followRecord;
     }
 
-    // 🎯 5. حل المشكلة الثانية والثالثة: عملنا Casting للـ targetUser كـ any عشان الـ TS يقرا الـ user_sport_profiles وميجيبش النوع Any الضمني
     const userAny = targetUser as any;
     const sportProfiles = userAny.user_sport_profiles || [];
 
-    // تنظيف الـ sport profiles من الـ user_id المكرر وتحديد نوع الـ parameter كـ any لمنع الـ TS error
     const cleanedSportProfiles = sportProfiles.map(({ user_id, ...rest }: any) => rest);
 
-    // تجهيز البيانات الأساسية بدون الباسورد والإيميل وتاريخ الميلاد
     const { password_hash, email, date_of_birth, ...publicData } = userAny;
 
     res.status(200).json({
@@ -340,12 +302,12 @@ export const getPublicProfile = async (
         user_sport_profiles: cleanedSportProfiles,
         followers_count: followersCount,
         following_count: followingCount,
-        programs_completed: 0, // جاهزة للربط مع جدول البرامج المكتملة مستقبلاً
+        programs_completed: 0,
         is_following,
       },
     });
   } catch (error: any) {
     console.error("Get Public Profile Error:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch user profile." });
+    next(new AppError("Failed to fetch user profile.", 500));
   }
 };

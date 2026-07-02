@@ -12,15 +12,18 @@ import searchRoutes from './routes/search.routes';
 import leaderboardsRoutes from './routes/leaderboards.routes';
 import workoutsRoutes from './routes/workouts.routes';
 import { errorHandler } from './middlewares/errorHandler.middleware';
+import swaggerUi from 'swagger-ui-express';
+import fs from 'fs';
+import path from 'path';
 const app: Application = express();
 
-
+const swaggerPath = path.join(__dirname, 'swagger-output.json');
+const swaggerDocument = JSON.parse(fs.readFileSync(swaggerPath, 'utf-8'));
 app.use(express.json());
 app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
-
-// Base API Endpoints
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));// Base API Endpoints
 app.use('/api/auth', authRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/athletes', athleteRoutes); // Register Athlete Routes

@@ -1,6 +1,7 @@
 import { Response, NextFunction } from "express";
 import { prisma } from "../config/prisma";
 import { AuthRequest } from "../middlewares/auth.middleware";
+import { AppError } from "../utils/AppError";
 
 // Get Next Workout
 export const getNextWorkout = async (
@@ -12,8 +13,7 @@ export const getNextWorkout = async (
     // 🚨 Sad Path: التشييك على التوكن والـ Payload
     const userId = req.user?.sub ? String(req.user.sub) : null;
     if (!userId) {
-      res.status(401).json({ error: "Unauthorized." }); // مطابقة للشيت
-      return;
+      return next(new AppError("Unauthorized.", 401));
     }
 
     const queryEnrollmentId = req.query.enrollment_id as string;
@@ -33,18 +33,15 @@ export const getNextWorkout = async (
       });
 
       if (!enrollment) {
-        res.status(404).json({ error: "Enrollment not found." }); // مطابقة للشيت
-        return;
+        return next(new AppError("Enrollment not found.", 404));
       }
 
       if (enrollment.user_id !== userId) {
-        res.status(403).json({ error: "Forbidden." }); // مطابقة للشيت
-        return;
+        return next(new AppError("Forbidden.", 403));
       }
 
       if (enrollment.status !== "active") {
-        res.status(404).json({ error: "No active enrollment found." }); // مطابقة للشيت
-        return;
+        return next(new AppError("No active enrollment found.", 404));
       }
 
       activeEnrollment = enrollment;
@@ -57,8 +54,7 @@ export const getNextWorkout = async (
     }
 
     if (!activeEnrollment) {
-      res.status(404).json({ error: "No active enrollment found." }); // مطابقة للشيت
-      return;
+      return next(new AppError("No active enrollment found.", 404));
     }
 
     // 2. جلب الـ Sessions المتبقية والـ Exercises المرتبطة بها
@@ -143,8 +139,7 @@ export const logWorkout = async (
   try {
     const userId = req.user?.sub ? String(req.user.sub) : null;
     if (!userId) {
-      res.status(401).json({ error: "Unauthorized." });
-      return;
+      return next(new AppError("Unauthorized.", 401));
     }
 
     const {
@@ -164,20 +159,17 @@ export const logWorkout = async (
     });
 
     if (!enrollment) {
-      res.status(404).json({ error: "Enrollment not found." });
-      return;
+      return next(new AppError("Enrollment not found.", 404));
     }
 
     // تأمين الـ Resource: التأكد من أن الـ Athlete هو صاحب الـ Enrollment
     if (enrollment.user_id !== userId) {
-      res.status(403).json({ error: "Forbidden." });
-      return;
+      return next(new AppError("Forbidden.", 403));
     }
 
     // 🚨 سطر 40 في الشيت: لو الـ enrollment مش active يرجع 409 Conflict
     if (enrollment.status !== "active") {
-      res.status(409).json({ error: "Cannot log to completed enrollment." });
-      return;
+      return next(new AppError("Cannot log to completed enrollment.", 409));
     }
 
     // 2. سطر 39 في الشيت: التأكد إن الـ Session دي تبع الـ Program المسجل فيه اللاعب فعلياً
@@ -191,11 +183,7 @@ export const logWorkout = async (
     });
 
     if (!sessionInProgram) {
-      res.status(403).json({
-        error:
-          "Forbidden — session does not belong to this enrollment's program.",
-      });
-      return;
+      return next(new AppError("Forbidden — session does not belong to this enrollment's program.", 403));
     }
 
     // 3. تنفيذ الـ Transaction لتسجيل الـ Log وحفظ الداتا متكاملة في خطوة واحدة
@@ -248,13 +236,13 @@ export const logWorkout = async (
 export const getWorkoutHistory = async (
   req: AuthRequest,
   res: Response,
+  next: NextFunction,
 ): Promise<void> => {
   try {
     // 1. Sad Path: No token
     const userId = req.user?.sub ? String(req.user.sub) : null;
     if (!userId) {
-      res.status(401).json({ success: false, error: "Unauthorized." });
-      return;
+      return next(new AppError("Unauthorized.", 401));
     }
 
     const limit = parseInt(req.query.limit as string) || 20;
@@ -270,15 +258,11 @@ export const getWorkoutHistory = async (
       });
 
       if (!enrollment) {
-        res
-          .status(404)
-          .json({ success: false, error: "Enrollment not found." });
-        return;
+        return next(new AppError("Enrollment not found.", 404));
       }
 
       if (enrollment.user_id !== userId) {
-        res.status(403).json({ success: false, error: "Forbidden." });
-        return;
+        return next(new AppError("Forbidden.", 403));
       }
 
       whereCondition.enrollment_id = queryEnrollmentId;
@@ -326,8 +310,6 @@ export const getWorkoutHistory = async (
     res.status(200).json(formattedHistory);
   } catch (error: any) {
     console.error("Get Workout History Error:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Internal server error occurred." });
+    next(new AppError("Internal server error occurred.", 500));
   }
 };

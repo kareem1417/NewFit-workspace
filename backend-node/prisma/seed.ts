@@ -1,84 +1,203 @@
-import { PrismaClient } from '@prisma/client';
+import {
+    PrismaClient,
+    program_goal,
+    competitive_level,
+    users,
+} from "@prisma/client";
+import * as bcrypt from "bcrypt";
 
 const prisma = new PrismaClient();
 
-async function main() {
-    console.log('🌱 Seeding database...');
-
-    // 1. إضافة رياضة الملاكمة
-    const boxing = await prisma.sports.upsert({
-        where: { id: 1 },
-        update: {},
-        create: {
-            id: 1,
-            name: 'Boxing',
-            description: 'The Sweet Science — Olympic and professional boxing',
-            is_active: true,
+async function seedSports() {
+    console.log("Seeding sports...");
+    const sports = [
+        {
+            name: "Boxing",
+            description: "The Sweet Science — Olympic and professional boxing.",
+            icon: "🥊",
         },
-    });
-    console.log(`✅ Sport: ${boxing.name} added.`);
-
-    // 2. إضافة الفئات العمرية (بالحقول الناقصة)
-    const ageGroups = [
-        { id: 1, name: 'Under-18', min_age: 10, max_age: 17 },
-        { id: 2, name: '18-35', min_age: 18, max_age: 35 },
-        { id: 3, name: 'Over-35', min_age: 36, max_age: 100 },
+        {
+            name: "MMA",
+            description: "Mixed Martial Arts, combining various combat disciplines.",
+            icon: "🥋",
+        },
+        {
+            name: "Football",
+            description: "American Football.",
+            icon: "🏈",
+        },
+        {
+            name: "Basketball",
+            description: "Hoops.",
+            icon: "🏀",
+        },
+        {
+            name: "Swimming",
+            description: "Aquatic sport.",
+            icon: "🏊",
+        },
+        {
+            name: "Tennis",
+            description: "Racket sport.",
+            icon: "🎾",
+        },
+        {
+            name: "Track & Field",
+            description: "Athletics competitions.",
+            icon: "🏃",
+        },
+        {
+            name: "General Fitness",
+            description: "Overall health and fitness training.",
+            icon: "💪",
+        },
     ];
 
-    for (const group of ageGroups) {
-        await prisma.age_groups.upsert({
-            where: { id: group.id },
+    for (const sport of sports) {
+        await prisma.sports.upsert({
+            where: { name: sport.name },
             update: {},
-            create: group,
+            create: sport,
         });
     }
-    console.log(`✅ Age Groups added.`);
+    console.log("Sports seeded successfully.");
+}
 
-    // 3. إضافة الخصائص الرياضية (مربوطة بالرياضة رقم 1 وبالترتيب)
-    const attributesData = [
-        { name: 'Strength', description: 'Maximal force generation', display_order: 1 },
-        { name: 'Explosiveness', description: 'Power and speed', display_order: 2 },
-        { name: 'Anaerobic Capacity', description: 'High-intensity endurance', display_order: 3 },
-        { name: 'Aerobic Endurance', description: 'Cardiovascular stamina', display_order: 4 },
-        { name: 'Speed', description: 'Velocity of movement', display_order: 5 }
+async function seedCoach(): Promise<users> {
+    console.log("Seeding a default coach...");
+    const coachEmail = "coach.seed@ringsidetest.com";
+    let coach = await prisma.users.findUnique({ where: { email: coachEmail } });
+
+    if (!coach) {
+        const hashedPassword = await bcrypt.hash("Password123!", 10);
+        coach = await prisma.users.create({
+            data: {
+                username: "CoachRingside",
+                email: coachEmail,
+                password_hash: hashedPassword,
+                role: "coach",
+                date_of_birth: new Date("1985-01-01"),
+                bio: "A seasoned coach dedicated to helping athletes reach their peak performance. I build champions.",
+                //refreshToken: `seed-token-coach-${Date.now()}`, // Satisfy NOT NULL UNIQUE constraint
+                is_active: true,
+            },
+        });
+        console.log(`Created coach: ${coach.username}`);
+    } else {
+        console.log(`Coach already exists: ${coach.username}`);
+    }
+    return coach;
+}
+
+async function seedPrograms(coachId: string) {
+    console.log("Seeding programs...");
+    const boxing = await prisma.sports.findUnique({ where: { name: "Boxing" } });
+    const generalFitness = await prisma.sports.findUnique({
+        where: { name: "General Fitness" },
+    });
+
+    if (!boxing || !generalFitness) {
+        console.error(
+            "Sports 'Boxing' or 'General Fitness' not found. Make sure to seed sports first.",
+        );
+        return;
+    }
+
+    const programs = [
+        {
+            title: "Beginner's Boxing Fundamentals",
+            description:
+                "A 4-week program to learn the basics of boxing, from stance and footwork to basic punches and defensive moves. Perfect for those new to the sweet science.",
+            sport_id: boxing.id,
+            goal_primary: "general" as program_goal,
+            level_target: "novice" as competitive_level,
+            duration_weeks: 4,
+            sessions_per_week: 3,
+            is_published: true,
+            cover_image:
+                "https://images.unsplash.com/photo-1593501938052-25d115578dec?q=80&w=2070&auto=format&fit=crop",
+            program_blocks: {
+                create: [
+                    {
+                        name: "Phase 1: Foundation",
+                        description:
+                            "Weeks 1-2: Building a solid base with stance, footwork, and primary punches.",
+                        order_index: 0,
+                        week_start: 1,
+                        week_end: 2,
+                        program_sessions: {
+                            create: [
+                                {
+                                    name: "Day 1: Stance & Footwork",
+                                    description: "Mastering the boxer's stance and basic movements.",
+                                    day_offset: 0,
+                                    estimated_duration_minutes: 45,
+                                    session_exercises: {
+                                        create: [
+                                            {
+                                                exercise_name: "Jump Rope",
+                                                sets: 3,
+                                                reps: "3 minutes",
+                                                rest_seconds: 60,
+                                                order_index: 0,
+                                                notes: "Focus on light feet and consistent rhythm.",
+                                            },
+                                            {
+                                                exercise_name: "Shadow Boxing (Stance & Movement)",
+                                                sets: 4,
+                                                reps: "3 minutes",
+                                                rest_seconds: 60,
+                                                order_index: 1,
+                                                notes:
+                                                    "Practice moving forward, backward, and laterally in your stance.",
+                                            },
+                                            {
+                                                exercise_name: "Plank",
+                                                sets: 3,
+                                                reps: "60 seconds",
+                                                rest_seconds: 60,
+                                                order_index: 2,
+                                            },
+                                        ],
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            },
+        },
     ];
 
-    for (const attr of attributesData) {
-        const existing = await prisma.sport_attributes.findFirst({ where: { name: attr.name, sport_id: boxing.id } });
+    for (const programData of programs) {
+        const existing = await prisma.programs.findFirst({
+            where: { title: programData.title, coach_id: coachId },
+        });
         if (!existing) {
-            await prisma.sport_attributes.create({ data: { ...attr, sport_id: boxing.id } });
+            await prisma.programs.create({
+                data: {
+                    ...programData,
+                    coach_id: coachId,
+                },
+            });
+            console.log(`Created program: "${programData.title}"`);
+        } else {
+            console.log(`Program already exists: "${programData.title}"`);
         }
     }
-    console.log(`✅ Sport Attributes added.`);
+    console.log("Programs seeded successfully.");
+}
 
-    // 4. إضافة الاختبارات البدنية
-    const tests = [
-        { attributeName: 'Strength', test_name: 'Trap Bar Deadlift', higher_is_better: true, weight: 1.0, unit: 'kg' },
-        { attributeName: 'Explosiveness', test_name: 'Power Clean', higher_is_better: true, weight: 0.5, unit: 'kg' },
-        { attributeName: 'Explosiveness', test_name: 'Box Jump Height', higher_is_better: true, weight: 0.5, unit: 'cm' },
-        { attributeName: 'Anaerobic Capacity', test_name: 'Medicine Ball Rotational Throw', higher_is_better: true, weight: 1.0, unit: 'meters' },
-        { attributeName: 'Aerobic Endurance', test_name: '1.5 Mile Run', higher_is_better: false, weight: 1.0, unit: 'minutes' },
-        { attributeName: 'Speed', test_name: '10m Sprint', higher_is_better: false, weight: 1.0, unit: 'seconds' }
-    ];
-
-    for (const test of tests) {
-        const { attributeName, ...testData } = test;
-        const attribute = await prisma.sport_attributes.findFirst({ where: { name: attributeName, sport_id: boxing.id } });
-        if (attribute) {
-            const existing = await prisma.attribute_tests.findFirst({ where: { test_name: testData.test_name } });
-            if (!existing) {
-                await prisma.attribute_tests.create({ data: { ...testData, sport_attribute_id: attribute.id } });
-            }
-        }
-    }
-    console.log(`✅ Attribute Tests added.`);
-
-    console.log('🎉 Seeding finished successfully!');
+async function main() {
+    console.log(`Start seeding ...`);
+    await seedSports();
+    const coach = await seedCoach();
+    await seedPrograms(coach.id);
+    console.log(`Seeding finished.`);
 }
 
 main()
     .catch((e) => {
-        console.error('❌ Seeding failed:');
         console.error(e);
         process.exit(1);
     })

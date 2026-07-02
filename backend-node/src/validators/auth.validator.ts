@@ -1,6 +1,5 @@
 // src/validators/auth.validator.ts
-import { body , validationResult} from "express-validator";
-import { Request, Response, NextFunction } from "express";
+import { body } from "express-validator";
 
 export const registerValidation = [
   body("username")
@@ -40,7 +39,6 @@ export const registerValidation = [
     .withMessage("Role must be athlete or coach"),
 ];
 
-
 export const loginValidation = [
   body("email")
     .trim()
@@ -51,20 +49,4 @@ export const loginValidation = [
   body("password")
     .notEmpty()
     .withMessage("Validation error — Password required."),
-  
-  // الميدل وير اللي بيفحص النتيجة ويرد فوراً على بوست مان لو فيه مشكلة
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      // هنا هيرجع أول غلطة واضحة علطول في بوست مان بـ كود 400
-      res.status(400).json({
-        success: false,
-        error: errors.array()[0].msg // هيجيب الرسالة اللي حددناها فوق
-      });
-      return; 
-    }
-    next();
-  }
 ];
-
-//login refresh .... and so on

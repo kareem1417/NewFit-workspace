@@ -1,13 +1,13 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
+import { AppError } from '../utils/AppError';
 import 'multer'; // Import for type augmentation to recognize req.file
 
 // --- 5.1 Get Social Feed ---
-export const getFeed = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getFeed = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const userId = String(req.user?.sub);
-        // Validate pagination values and set defaults
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
 
@@ -35,18 +35,17 @@ export const getFeed = async (req: AuthRequest, res: Response): Promise<void> =>
                 },
                 likes: {
                     where: { user_id: userId },
-                    // Modification: Requested a field that actually exists in the table
                     select: { user_id: true }
                 }
             }
         });
-        // 4. Format data for the frontend according to specifications
+
+        // 4. Format data for the frontend
         const formattedPosts = posts.map(post => {
             const { likes, users, ...postData } = post;
             return {
                 ...postData,
                 author: users,
-                // If the likes array is not empty, it means I liked this post
                 is_liked_by_me: likes.length > 0
             };
         });
@@ -54,55 +53,29 @@ export const getFeed = async (req: AuthRequest, res: Response): Promise<void> =>
         res.status(200).json({
             success: true,
             data: formattedPosts,
-            meta: {
-                limit,
-                offset,
-                count: formattedPosts.length
-            }
+            meta: { limit, offset, count: formattedPosts.length }
         });
 
     } catch (error: any) {
         console.error("Get Feed Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch feed." });
+        next(new AppError("Failed to fetch feed.", 500));
     }
 };
+
 // --- 5.2 Create Post ---
-export const createPost = async (req: AuthRequest, res: Response): Promise<void> => {
+export const createPost = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const userId = req.user?.sub as string;
-
-        // With Multer, req.body will contain text fields
         let { content } = req.body;
+        const file = (req as any).file;
 
-        // The uploaded file will be here
-        const file = req.file;
-
-        // 🎯 1. Validation: Post must contain either text content, an image, or both
-        if (!content && !file) {
-            res.status(400).json({
-                success: false,
-                error: "Validation error — post must contain content or an image"
-            });
-            return;
-        }
-
-        // 🎯 2. Validation الجديد: نرفض النص لو أطول من 500 حرف
-        if (content && content.length > 500) {
-            res.status(400).json({
-                success: false,
-                error: "Validation error — content too long."
-            });
-            return;
-        }
-
-        // 🎯 3. Sanitize content if it exists (شيلنا الـ substring لأننا ضمنا إنه مش هيعدي 500)
+        // Sanitize content if it exists
         if (content) {
             content = content.replace(/<[^>]*>?/gm, '');
         }
 
         const imagePath = file ? file.path : null;
 
-        // Create the post in the database
         const newPost = await prisma.posts.create({
             data: {
                 user_id: userId,
@@ -118,23 +91,18 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
 
     } catch (error: any) {
         console.error("Create Post Error:", error);
-        res.status(500).json({ success: false, error: "Failed to create post." });
+        next(new AppError("Failed to create post.", 500));
     }
 };
+
 // --- 5.12 Get Specific Post ---
-export const getSpecificPost = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getSpecificPost = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const userId = String(req.user?.sub);
         const postId = req.params.id;
 
-        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-        if (!uuidRegex.test(postId as string)) {
-            res.status(400).json({ success: false, error: "Validation error — invalid post ID." });
-            return;
-        }
-
         const post = await prisma.posts.findUnique({
-            where: { id: postId as string },
+            where: { id: postId as any },
             include: {
                 users: {
                     select: { id: true, username: true, profile_photo: true, role: true }
@@ -147,11 +115,9 @@ export const getSpecificPost = async (req: AuthRequest, res: Response): Promise<
         });
 
         if (!post) {
-            res.status(404).json({ success: false, error: "Post not found." });
-            return;
+            return next(new AppError("Post not found.", 404));
         }
 
-        // 4. تظبيط شكل الداتا زي الـ Feed بالظبط (عشان الفرونت إند)
         const { likes, users, ...postData } = post;
         const formattedPost = {
             ...postData,
@@ -159,7 +125,6 @@ export const getSpecificPost = async (req: AuthRequest, res: Response): Promise<
             is_liked_by_me: likes.length > 0
         };
 
-        // 5. الرد بالبوست
         res.status(200).json({
             success: true,
             data: formattedPost
@@ -167,41 +132,25 @@ export const getSpecificPost = async (req: AuthRequest, res: Response): Promise<
 
     } catch (error: any) {
         console.error("Get Specific Post Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch post." });
+        next(new AppError("Failed to fetch post.", 500));
     }
 };
-// --- 5.3 Get User Posts --- 
-// --- 5.3 Get User Posts --- 
-export const getUserPosts = async (req: AuthRequest, res: Response): Promise<void> => {
-    try {
-        // 🎯 1. استخراج الـ ID (سواء مبعوت في الـ params أو الـ query حسب الـ Route عندك)
-        const targetUserId = (req.params.id || req.query.user_id) as string;
 
+// --- 5.3 Get User Posts --- 
+export const getUserPosts = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const targetUserId = (req.params.id || req.query.user_id) as string;
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
 
-        // 🎯 2. الـ Validation الأساسي: نتأكد إن الـ UUID مبعوت وصيغته صح
-        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-        if (!targetUserId || !uuidRegex.test(targetUserId)) {
-            res.status(400).json({ success: false, error: "Validation error — invalid user ID." });
-            return;
-        }
-
-        // 🎯 3. حل التيستاية: تشيك سريع في الداتا بيز هل اليوزر ده عايش وموجود؟
         const userExists = await prisma.users.findUnique({
             where: { id: targetUserId }
         });
 
-        // لو مش موجود (زي حالة الأصفار) اضرب 404 فوراً واقفل الريكويست
         if (!userExists) {
-            res.status(404).json({
-                success: false,
-                error: "User not found."
-            });
-            return;
+            return next(new AppError("User not found.", 404));
         }
 
-        // 4. لو موجود، كمل عادي وهات البوستات بتاعته (الكود بتاعك السليم)
         const posts = await prisma.posts.findMany({
             where: { user_id: targetUserId },
             take: limit,
@@ -214,7 +163,6 @@ export const getUserPosts = async (req: AuthRequest, res: Response): Promise<voi
             }
         });
 
-        // Format the data
         const formattedPosts = posts.map(post => {
             const { users, ...postData } = post;
             return {
@@ -231,93 +179,77 @@ export const getUserPosts = async (req: AuthRequest, res: Response): Promise<voi
 
     } catch (error: any) {
         console.error("Get User Posts Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch user posts." });
+        next(new AppError("Failed to fetch user posts.", 500));
     }
 };
+
 // --- 5.4 Like Post ---
-export const likePost = async (req: AuthRequest, res: Response): Promise<void> => {
+export const likePost = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const userId = String(req.user?.sub);
         const postId = String(req.params.id);
 
-        // 1. Ensure the post exists
         const post = await prisma.posts.findUnique({ where: { id: postId } });
         if (!post) {
-            res.status(404).json({ success: false, error: "Post not found." });
-            return;
+            return next(new AppError("Post not found.", 404));
         }
 
-        // 2. Add like (ignore if already exists ON CONFLICT DO NOTHING)
         try {
             await prisma.likes.create({
                 data: { user_id: userId, post_id: postId }
             });
         } catch (e: any) {
-            // Prisma code P2002 means Unique Constraint Violation (like already exists)
-            // Specs say: silently succeed if exists, so we ignore this error
             if (e.code !== 'P2002') throw e;
         }
 
-        // ⚠️ Note: No manual update to likes count here, DB Trigger handles it
-
-        // 3. Respond exactly like Specs
         res.status(200).json({ liked: true });
 
     } catch (error: any) {
         console.error("Like Post Error:", error);
-        res.status(500).json({ success: false, error: "Failed to like post." });
+        next(new AppError("Failed to like post.", 500));
     }
 };
 
 // --- 5.5 Unlike Post ---
-export const unlikePost = async (req: AuthRequest, res: Response): Promise<void> => {
+export const unlikePost = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const userId = String(req.user?.sub);
         const postId = String(req.params.id);
 
-        // 1. Remove like if exists
-        // Used deleteMany to avoid needing the exact like ID
         const post = await prisma.posts.findUnique({ where: { id: postId } });
         if (!post) {
-            res.status(404).json({ success: false, error: "Post not found." });
-            return;
+            return next(new AppError("Post not found.", 404));
         }
 
         await prisma.likes.deleteMany({
             where: { post_id: postId, user_id: userId }
         });
 
-        // ⚠️ Note: DB Trigger will decrement the count automatically
-
-        // 2. Respond exactly like Specs
         res.status(200).json({ liked: false });
 
     } catch (error: any) {
         console.error("Unlike Post Error:", error);
-        res.status(500).json({ success: false, error: "Failed to unlike post." });
+        next(new AppError("Failed to unlike post.", 500));
     }
 };
+
 // --- 5.6 Get Comments ---
-export const getComments = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getComments = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const postId = String(req.params.id);
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
+
         const post = await prisma.posts.findUnique({ where: { id: postId } });
         if (!post) {
-            res.status(401).json({
-                success: false,
-                error: "Post not found."
-            });
-            return;
+            return next(new AppError("Post not found.", 401)); // Requested 401 per your logic
         }
 
-        // Fetch comments (oldest first, like a chat system)
         const comments = await prisma.comments.findMany({
             where: { post_id: postId },
             take: limit,
             skip: offset,
-            orderBy: { created_at: 'asc' }, // asc: Oldest first
+            orderBy: { created_at: 'asc' },
             include: {
                 users: {
                     select: { id: true, username: true, profile_photo: true }
@@ -325,7 +257,6 @@ export const getComments = async (req: AuthRequest, res: Response): Promise<void
             }
         });
 
-        // Format data exactly like Specs
         const formattedComments = comments.map(c => ({
             id: c.id,
             content: c.content,
@@ -343,52 +274,25 @@ export const getComments = async (req: AuthRequest, res: Response): Promise<void
 
     } catch (error: any) {
         console.error("Get Comments Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch comments." });
+        next(new AppError("Failed to fetch comments.", 500));
     }
 };
 
 // --- 5.7 Add Comment ---
-export const addComment = async (req: AuthRequest, res: Response): Promise<void> => {
+export const addComment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const userId = String(req.user?.sub);
         const postId = String(req.params.id);
         let { content } = req.body;
 
-        // 🎯 1. منع الكومنت الفاضي أو اللي كله مسافات
-        if (!content || content.trim().length === 0) {
-            res.status(400).json({
-                success: false,
-                error: "Validation error — Comment content is required and cannot be empty."
-            });
-            return;
-        }
-
-        // إزالة المسافات الزايدة من الأول والآخر عشان نعد الحروف صح
-        content = content.trim();
-
-        // 🎯 2. منع الكومنت لو عدى 500 حرف
-        if (content.length > 500) {
-            res.status(400).json({
-                success: false,
-                error: "Validation error — Comment exceeds maximum length of 500 characters."
-            });
-            return;
-        }
-
-        // 🎯 3. التأكد إن البوست موجود (ورجوع إيرور 401 زي ما طلبت)
         const post = await prisma.posts.findUnique({ where: { id: postId } });
         if (!post) {
-            res.status(401).json({
-                success: false,
-                error: "Post not found."
-            });
-            return;
+            return next(new AppError("Post not found.", 401));
         }
 
-        // 4. فلترة النص من أي HTML Tags للحماية (وشيلنا الـ substring عشان عملنا Validation فوق)
+        content = content.trim();
         content = content.replace(/<[^>]*>?/gm, '');
 
-        // 5. إضافة الكومنت في الداتا بيز
         const comment = await prisma.comments.create({
             data: {
                 user_id: userId,
@@ -413,38 +317,157 @@ export const addComment = async (req: AuthRequest, res: Response): Promise<void>
 
     } catch (error: any) {
         console.error("Add Comment Error:", error);
-        res.status(500).json({ success: false, error: "Failed to add comment." });
+        next(new AppError("Failed to add comment.", 500));
+    }
+};
+// --- 5.13 Update Post ---
+export const updatePost = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = String(req.user?.sub);
+        const postId = req.params.id;
+        let { content } = req.body;
+        const file = (req as any).file;
+
+        const post = await prisma.posts.findUnique({ where: { id: postId as any } });
+        if (!post) {
+            return next(new AppError("Post not found.", 404));
+        }
+        if (post.user_id !== userId) {
+            return next(new AppError("Forbidden — you can only update your own posts.", 403));
+        }
+
+        if (content) {
+            content = content.replace(/<[^>]*>?/gm, ''); // Sanitize HTML
+        }
+
+        const imagePath = file ? file.path : post.image_path;
+
+        const updatedPost = await prisma.posts.update({
+            where: { id: postId as any },
+            data: {
+                ...(content !== undefined && { content }),
+                image_path: imagePath
+            }
+        });
+
+        res.status(200).json({ success: true, data: updatedPost });
+    } catch (error: any) {
+        console.error("Update Post Error:", error);
+        next(new AppError("Failed to update post.", 500));
+    }
+};
+
+// --- 5.14 Delete Post ---
+export const deletePost = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = String(req.user?.sub);
+        const postId = req.params.id;
+
+        const post = await prisma.posts.findUnique({ where: { id: postId as any } });
+        if (!post) {
+            return next(new AppError("Post not found.", 404));
+        }
+        if (post.user_id !== userId) {
+            return next(new AppError("Forbidden — you can only delete your own posts.", 403));
+        }
+
+        await prisma.posts.delete({ where: { id: postId as any } });
+
+        res.status(200).json({ success: true, message: "Post deleted successfully." });
+    } catch (error: any) {
+        console.error("Delete Post Error:", error);
+        next(new AppError("Failed to delete post.", 500));
+    }
+};
+
+// --- 5.15 Update Comment ---
+export const updateComment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = String(req.user?.sub);
+        const commentId = req.params.id;
+        let { content } = req.body;
+
+        const comment = await prisma.comments.findUnique({ where: { id: commentId as any } });
+        if (!comment) {
+            return next(new AppError("Comment not found.", 404));
+        }
+        if (comment.user_id !== userId) {
+            return next(new AppError("Forbidden — you can only update your own comments.", 403));
+        }
+
+        content = content.trim().replace(/<[^>]*>?/gm, '');
+
+        const updatedComment = await prisma.comments.update({
+            where: { id: commentId as any },
+            data: { content }
+        });
+
+        res.status(200).json({ success: true, data: updatedComment });
+    } catch (error: any) {
+        console.error("Update Comment Error:", error);
+        next(new AppError("Failed to update comment.", 500));
+    }
+};
+
+// --- 5.16 Delete Comment ---
+// --- 5.16 Delete Comment ---
+export const deleteComment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = String(req.user?.sub);
+        const commentId = req.params.id;
+
+        // 🎯 1. جلب الكومنت، ودمج بيانات البوست المرتبط بيه عشان نعرف مين صاحب البوست
+        const comment = await prisma.comments.findUnique({
+            where: { id: commentId as any },
+            include: {
+                posts: {
+                    select: { user_id: true } // بنجيب ID صاحب البوست بس عشان الأداء
+                }
+            }
+        });
+
+        if (!comment) {
+            return next(new AppError("Comment not found.", 404));
+        }
+
+        // 🎯 2. تحديد الصلاحيات
+        const isCommentAuthor = comment.user_id === userId; // هل هو اللي كاتب الكومنت؟
+        const isPostAuthor = comment.posts?.user_id === userId; // هل هو صاحب البوست نفسه؟
+
+        // 🎯 3. لو مش ده ولا ده، نرفض العملية
+        if (!isCommentAuthor && !isPostAuthor) {
+            return next(new AppError("Forbidden — you can only delete your own comments or comments on your posts.", 403));
+        }
+
+        // 4. تنفيذ المسح
+        await prisma.comments.delete({ where: { id: commentId as any } });
+
+        res.status(200).json({ success: true, message: "Comment deleted successfully." });
+    } catch (error: any) {
+        console.error("Delete Comment Error:", error);
+        next(new AppError("Failed to delete comment.", 500));
     }
 };
 // --- 5.8 Follow User ---
-export const followUser = async (req: AuthRequest, res: Response): Promise<void> => {
+export const followUser = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const followerId = String(req.user?.sub);
         const followeeId = String(req.params.userId);
 
-        // 1. Users cannot follow themselves
         if (followerId === followeeId) {
-            res.status(400).json({ success: false, error: "You cannot follow yourself." });
-            return;
+            return next(new AppError("You cannot follow yourself.", 400));
         }
 
-        // 2. Ensure target user exists
         const userExists = await prisma.users.findUnique({ where: { id: followeeId } });
         if (!userExists) {
-            res.status(404).json({ success: false, error: "User to follow not found." });
-            return;
+            return next(new AppError("User to follow not found.", 404));
         }
 
-        // 3. Add follow (ON CONFLICT DO NOTHING handled via Try/Catch)
         try {
             await prisma.follows.create({
-                data: {
-                    follower_id: followerId,
-                    followee_id: followeeId
-                }
+                data: { follower_id: followerId, followee_id: followeeId }
             });
         } catch (e: any) {
-            // If relation already exists (P2002), ignore error and silently succeed
             if (e.code !== 'P2002') throw e;
         }
 
@@ -452,66 +475,49 @@ export const followUser = async (req: AuthRequest, res: Response): Promise<void>
 
     } catch (error: any) {
         console.error("Follow User Error:", error);
-        res.status(500).json({ success: false, error: "Failed to follow user." });
+        next(new AppError("Failed to follow user.", 500));
     }
 };
 
 // --- 5.9 Unfollow User ---
-export const unfollowUser = async (req: AuthRequest, res: Response): Promise<void> => {
+export const unfollowUser = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const followerId = String(req.user?.sub);
         const followeeId = String(req.params.userId);
 
-        // Remove follow if exists
         await prisma.follows.deleteMany({
-            where: {
-                follower_id: followerId,
-                followee_id: followeeId
-            }
+            where: { follower_id: followerId, followee_id: followeeId }
         });
 
         res.status(200).json({ following: false });
 
     } catch (error: any) {
         console.error("Unfollow User Error:", error);
-        res.status(500).json({ success: false, error: "Failed to unfollow user." });
+        next(new AppError("Failed to unfollow user.", 500));
     }
 };
 
 // --- 5.10 Get Followers ---
-export const getFollowers = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getFollowers = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const targetUserId = String(req.params.id);
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
 
-        // 🎯 1. Validate user ID format
-        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-        if (!uuidRegex.test(targetUserId)) {
-            res.status(400).json({ success: false, error: "Validation error — invalid user ID." });
-            return;
-        }
-
-        // 🎯 2. Check if the target user exists
         const userExists = await prisma.users.findUnique({
             where: { id: targetUserId }
         });
 
         if (!userExists) {
-            res.status(404).json({
-                success: false,
-                error: "User not found."
-            });
-            return;
+            return next(new AppError("User not found.", 404));
         }
-        // Fetch list of followers (users following this user)
+
         const followers = await prisma.follows.findMany({
             where: { followee_id: targetUserId },
             take: limit,
             skip: offset,
             orderBy: { created_at: 'desc' },
             include: {
-                // ⚠️ If Prisma complains here, change this name to the one in the error
                 users_follows_follower_idTousers: {
                     select: {
                         id: true,
@@ -527,10 +533,9 @@ export const getFollowers = async (req: AuthRequest, res: Response): Promise<voi
             }
         });
 
-        // Format data for frontend
         const formattedFollowers = followers.map(f => {
             const user = f.users_follows_follower_idTousers;
-            const profile = user?.user_sport_profiles?.[0]; // Primary profile
+            const profile = user?.user_sport_profiles?.[0];
             return {
                 id: user?.id,
                 username: user?.username,
@@ -545,45 +550,31 @@ export const getFollowers = async (req: AuthRequest, res: Response): Promise<voi
 
     } catch (error: any) {
         console.error("Get Followers Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch followers." });
+        next(new AppError("Failed to fetch followers.", 500));
     }
 };
 
 // --- 5.11 Get Following ---
-export const getFollowing = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getFollowing = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const targetUserId = String(req.params.id);
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = parseInt(req.query.offset as string) || 0;
 
-        // 🎯 1. Validate user ID format
-        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-        if (!uuidRegex.test(targetUserId)) {
-            res.status(400).json({ success: false, error: "Validation error — invalid user ID." });
-            return;
-        }
-
-        // 🎯 2. Check if the target user exists
         const userExists = await prisma.users.findUnique({
             where: { id: targetUserId }
         });
 
         if (!userExists) {
-            res.status(404).json({
-                success: false,
-                error: "User not found."
-            });
-            return;
+            return next(new AppError("User not found.", 404));
         }
 
-        // Fetch list of users this user is following
         const following = await prisma.follows.findMany({
             where: { follower_id: targetUserId },
             take: limit,
             skip: offset,
             orderBy: { created_at: 'desc' },
             include: {
-                // ⚠️ Same note as above, change name if it complains
                 users_follows_followee_idTousers: {
                     select: {
                         id: true,
@@ -616,6 +607,6 @@ export const getFollowing = async (req: AuthRequest, res: Response): Promise<voi
 
     } catch (error: any) {
         console.error("Get Following Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch following." });
+        next(new AppError("Failed to fetch following.", 500));
     }
 };

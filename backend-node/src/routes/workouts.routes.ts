@@ -10,7 +10,6 @@ import {
   getNextWorkoutValidation,
   postLogValidation,
 } from "../validators/workouts.validator";
-import { ValidatorsImpl } from "express-validator/lib/chain";
 import { validate } from "../middlewares/validation.middleware";
 
 const router = Router();
