@@ -1,0 +1,1775 @@
+openapi: 3.0.0
+info:
+  title: "Ringside API"
+  version: "1.0.0"
+  description: "API specification for the Ringside backend application."
+servers:
+  - url: "/api/v1"
+    description: "Development server"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+
+    # Auth Schemas
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - email
+        - password
+        - date_of_birth
+      properties:
+        username:
+          type: string
+          example: "new_boxer"
+        email:
+          type: string
+          format: email
+          example: "new.boxer@example.com"
+        password:
+          type: string
+          format: password
+          example: "StrongPass123"
+        date_of_birth:
+          type: string
+          format: date
+          example: "1995-05-10"
+        role:
+          type: string
+          enum: [athlete, coach]
+          default: athlete
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "test.user@example.com"
+        password:
+          type: string
+          format: password
+          example: "Password123"
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            user:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                username:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [athlete, coach]
+            tokens:
+              type: object
+              properties:
+                accessToken:
+                  type: string
+                refreshToken:
+                  type: string
+
+    # User Schemas
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [athlete, coach]
+        profile_photo:
+          type: string
+          format: uri
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        date_of_birth:
+          type: string
+          format: date-time
+        social_links:
+          type: object
+          additionalProperties: true
+        role_models:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        user_sport_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSportProfile'
+
+    UserSportProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        level:
+          type: string
+          enum: [novice, amateur, professional]
+        weight_class:
+          type: string
+        is_primary:
+          type: boolean
+        sports:
+          type: object
+          properties:
+            name:
+              type: string
+              example: "Boxing"
+
+    UpdateMeRequest:
+      type: object
+      properties:
+        bio:
+          type: string
+          nullable: true
+        username:
+          type: string
+        social_links:
+          type: object
+          additionalProperties: true
+          example: { "instagram": "my_insta", "youtube": "my_channel" }
+        role_models:
+          type: array
+          items:
+            type: string
+          example: ["Muhammad Ali", "Mike Tyson"]
+
+    PublicProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        profile_photo:
+          type: string
+          format: uri
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        is_following:
+          type: boolean
+        user_sport_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSportProfile'
+
+    # Athlete Schemas
+    CreateSportProfileRequest:
+      type: object
+      required:
+        - sport_id
+        - level
+        - weight_class
+      properties:
+        sport_id:
+          type: integer
+          description: "FK to sports.id (e.g., 1 for Boxing)"
+          example: 1
+        level:
+          type: string
+          enum: [novice, amateur, professional]
+        weight_class:
+          type: string
+          example: "middleweight"
+        is_primary:
+          type: boolean
+          default: true
+
+    UpdateSportProfileRequest:
+      type: object
+      properties:
+        level:
+          type: string
+          enum: [novice, amateur, professional]
+        weight_class:
+          type: string
+          example: "welterweight"
+
+    SnapshotTestValueInput:
+      type: object
+      required:
+        - attribute_test_id
+        - value
+      properties:
+        attribute_test_id:
+          type: integer
+          description: "FK to attribute_tests.id"
+        value:
+          type: number
+          description: "The raw test result value"
+
+    CreateSnapshotRequest:
+      type: object
+      required:
+        - sport_id
+        - snapshot_type
+        - test_values
+      properties:
+        sport_id:
+          type: integer
+        snapshot_type:
+          type: string
+          enum: [initial_onboarding, program_baseline, program_posttest, manual_update]
+        program_enrollment_id:
+          type: string
+          format: uuid
+          description: "Required if type is program_baseline or program_posttest"
+        notes:
+          type: string
+        test_values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SnapshotTestValueInput'
+
+    SnapshotTestValue:
+      type: object
+      properties:
+        attribute_test_id:
+          type: integer
+        test_name:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+
+    Snapshot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        snapshot_type:
+          type: string
+          enum: [initial_onboarding, program_baseline, program_posttest, manual_update]
+        created_at:
+          type: string
+          format: date-time
+        notes:
+          type: string
+          nullable: true
+        test_values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SnapshotTestValue'
+
+    RadarAxis:
+      type: object
+      properties:
+        attribute_name:
+          type: string
+        percentile:
+          type: number
+        fallback_level:
+          type: integer
+
+    PunchPowerBreakdown:
+      type: object
+      properties:
+        score:
+          type: number
+        foundation:
+          type: object
+          properties:
+            percentile:
+              type: number
+            test_name:
+              type: string
+            raw_value:
+              type: number
+            unit:
+              type: string
+        accelerator:
+          type: object
+          properties:
+            percentile:
+              type: number
+            test_name:
+              type: string
+            raw_value:
+              type: number
+            unit:
+              type: string
+        transfer:
+          type: object
+          properties:
+            percentile:
+              type: number
+            test_name:
+              type: string
+            raw_value:
+              type: number
+            unit:
+              type: string
+
+    CohortInfo:
+      type: object
+      properties:
+        weight_class:
+          type: string
+        level:
+          type: string
+        age_group:
+          type: string
+
+    RadarData:
+      type: object
+      properties:
+        radar_axes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RadarAxis'
+        punch_power:
+          $ref: '#/components/schemas/PunchPowerBreakdown'
+        cohort_used:
+          $ref: '#/components/schemas/CohortInfo'
+        snapshot_date:
+          type: string
+          format: date-time
+
+    ProgressDataPoint:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date-time
+        raw_value:
+          type: number
+        percentile:
+          type: number
+        snapshot_type:
+          type: string
+
+    ProgressData:
+      type: object
+      properties:
+        test_name:
+          type: string
+        unit:
+          type: string
+        higher_is_better:
+          type: boolean
+        data_points:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressDataPoint'
+
+    # Program Schemas
+    Program:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        goal_primary:
+          type: string
+          enum: [strength, explosiveness, endurance, power, general]
+        level_target:
+          type: string
+          enum: [novice, amateur, professional, beginner]
+        duration_weeks:
+          type: integer
+        sessions_per_week:
+          type: integer
+        cover_image:
+          type: string
+          format: uri
+          nullable: true
+        rating_avg:
+          type: number
+          format: float
+        rating_count:
+          type: integer
+        enrollment_count:
+          type: integer
+        coach_name:
+          type: string
+        coach_photo:
+          type: string
+          format: uri
+          nullable: true
+        sport_name:
+          type: string
+
+    ProgramDetail:
+      allOf:
+        - $ref: '#/components/schemas/Program'
+        - type: object
+          properties:
+            coach:
+              type: object
+              properties:
+                name:
+                  type: string
+                photo:
+                  type: string
+                  format: uri
+                  nullable: true
+                bio:
+                  type: string
+            blocks:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProgramBlock'
+            recent_ratings:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProgramRating'
+
+    ProgramBlock:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        order_index:
+          type: integer
+        week_start:
+          type: integer
+        week_end:
+          type: integer
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgramSession'
+
+    ProgramSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        day_offset:
+          type: integer
+        estimated_duration_minutes:
+          type: integer
+        exercises:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionExercise'
+
+    SessionExercise:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        exercise_name:
+          type: string
+        sets:
+          type: integer
+        reps:
+          type: string
+          example: "8-12"
+        rest_seconds:
+          type: integer
+        intensity_note:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        order_index:
+          type: integer
+
+    ProgramRating:
+      type: object
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        review:
+          type: string
+        username:
+          type: string
+        date:
+          type: string
+          format: date-time
+
+    CreateProgramRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        sport_id:
+          type: integer
+        goal_primary:
+          type: string
+          enum: [strength, explosiveness, endurance, power, general]
+        level_target:
+          type: string
+          enum: [novice, amateur, professional, beginner]
+        duration_weeks:
+          type: integer
+        sessions_per_week:
+          type: integer
+        is_published:
+          type: boolean
+        cover_image:
+          type: string
+          format: uri
+        blocks:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              order_index:
+                type: integer
+              week_start:
+                type: integer
+              week_end:
+                type: integer
+              sessions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    day_offset:
+                      type: integer
+                    estimated_duration_minutes:
+                      type: integer
+                    exercises:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          exercise_name:
+                            type: string
+                          sets:
+                            type: integer
+                          reps:
+                            type: string
+                          rest_seconds:
+                            type: integer
+                          intensity_note:
+                            type: string
+                          notes:
+                            type: string
+                          order_index:
+                            type: integer
+
+    UpdateProgramRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        goal_primary:
+          type: string
+          enum: [strength, explosiveness, endurance, power, general]
+        level_target:
+          type: string
+          enum: [novice, amateur, professional, beginner]
+        duration_weeks:
+          type: integer
+        sessions_per_week:
+          type: integer
+        is_published:
+          type: boolean
+        cover_image:
+          type: string
+          format: uri
+
+    EnrollRequest:
+      type: object
+      properties:
+        program_id:
+          type: string
+          format: uuid
+        preferred_days:
+          type: array
+          items:
+            type: string
+            example: ["Monday", "Wednesday", "Friday"]
+        preferred_time:
+          type: string
+          example: "07:00"
+        baseline_test_values:
+          type: array
+          items:
+            type: object
+            properties:
+              attribute_test_id:
+                type: integer
+              value:
+                type: number
+
+    EnrollResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: "active"
+        start_date:
+          type: string
+          format: date-time
+        baseline_snapshot_id:
+          type: string
+          format: uuid
+
+    CompleteEnrollmentRequest:
+      type: object
+      properties:
+        enrollment_id:
+          type: string
+          format: uuid
+        posttest_test_values:
+          type: array
+          items:
+            type: object
+            properties:
+              attribute_test_id:
+                type: integer
+              value:
+                type: number
+
+    CompleteEnrollmentResponse:
+      type: object
+      properties:
+        enrollment:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              example: "completed"
+            completed_date:
+              type: string
+              format: date-time
+        deltas:
+          type: array
+          items:
+            type: object
+        testimonial:
+          type: string
+
+    RateProgramRequest:
+      type: object
+      properties:
+        program_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        review:
+          type: string
+
+    RateProgramResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        program_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+        review:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    EnrolledProgram:
+      type: object
+      properties:
+        enrollment_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        start_date:
+          type: string
+          format: date-time
+        completed_date:
+          type: string
+          format: date-time
+          nullable: true
+        program:
+          $ref: '#/components/schemas/Program'
+
+    # AI Schemas
+    AskRequest:
+      type: object
+      properties:
+        question:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    AskResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        session_id:
+          type: string
+          format: uuid
+        data:
+          type: object
+          properties:
+            answer:
+              type: string
+            engine:
+              type: string
+
+    RecommendRequest:
+      type: object
+      description: "Optional fields to override the user's saved metrics for a one-off recommendation."
+      properties:
+        height_cm:
+          type: number
+        weight_kg:
+          type: number
+        goal:
+          type: string
+        training_days_per_week:
+          type: integer
+        years_training:
+          type: integer
+        has_injury_history:
+          type: boolean
+        endurance_score:
+          type: integer
+        strength_score:
+          type: integer
+        speed_score:
+          type: integer
+        flexibility_score:
+          type: integer
+        explosiveness_score:
+          type: integer
+        recovery_score:
+          type: integer
+
+    RecommendResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            recommendation:
+              type: object
+              properties:
+                recommended_program_id:
+                  type: string
+                confidence:
+                  type: string
+                model_used:
+                  type: string
+                reason:
+                  type: string
+            user_metrics:
+              type: object
+
+    CoachAdviceRequest:
+      type: object
+      properties:
+        score:
+          type: number
+        level:
+          type: string
+        weight_class:
+          type: string
+        breakdown_percentiles:
+          type: object
+          properties:
+            foundation:
+              type: integer
+            accelerator:
+              type: integer
+            transfer:
+              type: integer
+        raw_values:
+          type: object
+          properties:
+            foundation:
+              type: number
+            accelerator:
+              type: number
+            transfer:
+              type: number
+
+    CoachAdviceResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        advice:
+          type: string
+        engine:
+          type: string
+
+    ChatSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        suggested_programs:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              title:
+                type: string
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: "Register a new user"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: "User registered successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: "Validation error (e.g., weak password, invalid email)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: "Conflict (e.g., email or username already exists)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: "Log in a user"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: "Login successful"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: "Validation error (e.g., missing fields)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: "Invalid credentials"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: "Refresh access token"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: "Token refreshed successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      tokens:
+                        type: object
+                        properties:
+                          accessToken:
+                            type: string
+                          refreshToken:
+                            type: string
+        '400':
+          description: "Refresh token is required"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: "Invalid or expired refresh token"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: "Log out a user"
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: "Logged out successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '401':
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: "Get current user's profile"
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: "Successful response"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: "Unauthorized"
+        '404':
+          description: "User not found"
+
+    patch:
+      tags: [Users]
+      summary: "Update current user's profile"
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeRequest'
+      responses:
+        '200':
+          description: "Profile updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: "Unauthorized"
+        '409':
+          description: "Username is already taken"
+
+  /users/me/photo:
+    post:
+      tags: [Users]
+      summary: "Upload profile photo"
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                photo:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: "Photo uploaded successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  profile_photo:
+                    type: string
+                    format: uri
+        '400':
+          description: "No image file provided"
+        '401':
+          description: "Unauthorized"
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: "Get a public user profile"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: "Successful response"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/PublicProfile'
+        '401':
+          description: "Unauthorized"
+        '404':
+          description: "User not found"
+
+  /athletes/sport-profile:
+    post:
+      tags: [Athletes]
+      summary: "Create a new sport profile for the current user"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSportProfileRequest'
+      responses:
+        '201':
+          description: "Sport profile created successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSportProfile'
+        '401':
+          description: "Unauthorized"
+        '409':
+          description: "Conflict - A profile for this sport already exists for the user."
+
+    patch:
+      tags: [Athletes]
+      summary: "Update the current user's primary sport profile"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSportProfileRequest'
+      responses:
+        '200':
+          description: "Sport profile updated successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSportProfile'
+        '401':
+          description: "Unauthorized"
+        '404':
+          description: "Sport profile not found. Please create one first."
+
+  /athletes/snapshots:
+    post:
+      tags: [Athletes]
+      summary: "Create a new physical snapshot"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSnapshotRequest'
+      responses:
+        '201':
+          description: "Snapshot created successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '400':
+          description: "Validation error (e.g., missing enrollment ID for baseline)"
+        '401':
+          description: "Unauthorized"
+        '404':
+          description: "Referenced entity (e.g., enrollment, test) not found"
+
+    get:
+      tags: [Athletes]
+      summary: "Get the current user's physical snapshots"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [initial_onboarding, program_baseline, program_posttest, manual_update]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: "A list of physical snapshots"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Snapshot'
+        '401':
+          description: "Unauthorized"
+
+  /athletes/radar:
+    get:
+      tags: [Athletes]
+      summary: "Get the user's performance radar data"
+      description: "Calculates performance percentiles based on the user's latest snapshot compared to normative data."
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cohort
+          in: query
+          description: "Specify a target cohort for comparison (e.g., 'professional'). Defaults to user's own level."
+          schema:
+            type: string
+        - name: weight_class
+          in: query
+          description: "Specify a target weight class for comparison. Defaults to user's own."
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Radar data calculated successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadarData'
+        '401':
+          description: "Unauthorized"
+        '404':
+          description: "User has no physical snapshots to generate data from."
+
+  /athletes/progress/{attributeTestId}:
+    get:
+      tags: [Athletes]
+      summary: "Get progress for a specific physical attribute test"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: attributeTestId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: "The ID of the attribute_test to track progress for."
+      responses:
+        '200':
+          description: "Time-series progress data"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressData'
+        '401':
+          description: "Unauthorized"
+        '404':
+          description: "Attribute test not found."
+
+  /athletes/enrollments:
+    get:
+      tags: [Athletes]
+      summary: "Get the current user's program enrollments"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, completed, cancelled]
+      responses:
+        '200':
+          description: "A list of the user's enrollments"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    status:
+                      type: string
+                    start_date:
+                      type: string
+                      format: date-time
+                    completed_date:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    preferred_days:
+                      type: array
+                      items:
+                        type: string
+                    preferred_time:
+                      type: string
+                    program_title:
+                      type: string
+                    program_goal:
+                      type: string
+                    program_duration_weeks:
+                      type: integer
+                    program_cover_image:
+                      type: string
+                      format: uri
+                      nullable: true
+                    coach_name:
+                      type: string
+                    baseline_snapshot_id:
+                      type: string
+                      format: uuid
+                    posttest_snapshot_id:
+                      type: string
+                      format: uuid
+                      nullable: true
+        '401':
+          description: "Unauthorized"
+
+  /programs:
+    post:
+      tags: [Programs]
+      summary: "Create a new program (Coach only)"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProgramRequest'
+      responses:
+        '201':
+          description: "Program created successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramDetail'
+        '400':
+          description: "Validation error"
+        '401':
+          description: "Unauthorized"
+        '403':
+          description: "Forbidden (not a coach)"
+        '404':
+          description: "Sport not found"
+
+    get:
+      tags: [Programs]
+      summary: "List available programs"
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: sport_id
+          in: query
+          schema:
+            type: integer
+        - name: duration_weeks
+          in: query
+          schema:
+            type: integer
+        - name: min_rating
+          in: query
+          schema:
+            type: number
+        - name: goal
+          in: query
+          schema:
+            type: string
+        - name: level
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "A list of programs"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Program'
+
+  /programs/details: # Using a different path as Prisma doesn't support /programs/:id
+    get:
+      tags: [Programs]
+      summary: "Get program details by ID"
+      parameters:
+        - name: program_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: "Program details"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramDetail'
+        '404':
+          description: "Program not found"
+
+  /programs/update: # Using a different path for PATCH
+    patch:
+      tags: [Programs]
+      summary: "Update a program (Coach only)"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/UpdateProgramRequest'
+                - type: object
+                  properties:
+                    program_id:
+                      type: string
+                      format: uuid
+      responses:
+        '200':
+          description: "Program updated"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '403':
+          description: "Forbidden (not program owner)"
+        '404':
+          description: "Program not found"
+
+  /programs/{id}:
+    delete:
+      tags: [Programs]
+      summary: "Delete a program (Coach only)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: "Program deleted successfully"
+        '400':
+          description: "Invalid Program ID format"
+        '403':
+          description: "Forbidden (not program owner)"
+        '404':
+          description: "Program not found"
+        '409':
+          description: "Conflict (e.g., active enrollments exist)"
+
+  /programs/enroll:
+    post:
+      tags: [Programs]
+      summary: "Enroll in a program"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
+      responses:
+        '201':
+          description: "Successfully enrolled"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollResponse'
+        '404':
+          description: "Program not found or not published"
+        '409':
+          description: "Conflict - already actively enrolled"
+
+  /programs/complete-enrollment:
+    post:
+      tags: [Programs]
+      summary: "Complete a program enrollment"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteEnrollmentRequest'
+      responses:
+        '200':
+          description: "Enrollment completed"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteEnrollmentResponse'
+        '403':
+          description: "Forbidden - not your enrollment"
+        '404':
+          description: "Enrollment not found"
+        '409':
+          description: "Conflict - enrollment is not active"
+
+  /programs/rate:
+    post:
+      tags: [Programs]
+      summary: "Rate a program"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateProgramRequest'
+      responses:
+        '201':
+          description: "Rating submitted"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateProgramResponse'
+        '403':
+          description: "Forbidden - must complete program first"
+        '409':
+          description: "Conflict - already rated"
+
+  /programs/me/enrolled:
+    get:
+      tags: [Programs]
+      summary: "Get my enrolled programs"
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: "List of enrolled programs"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EnrolledProgram'
+        '404':
+          description: "No enrolled programs found"
+
+  /ai/ask:
+    post:
+      tags: [AI]
+      summary: "Ask a question to the AI"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+      responses:
+        '200':
+          description: "AI Response"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AskResponse'
+        '400':
+          description: "Question is required"
+        '403':
+          description: "Forbidden - session belongs to another user"
+        '404':
+          description: "User or Session not found"
+
+  /ai/recommend:
+    post:
+      tags: [AI]
+      summary: "Get a program recommendation"
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendRequest'
+      responses:
+        '200':
+          description: "Program recommendation"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendResponse'
+        '400':
+          description: "User metrics not found"
+        '404':
+          description: "User not found"
+
+  /ai/coach-advice:
+    post:
+      tags: [AI]
+      summary: "Get AI coach analysis on performance data"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoachAdviceRequest'
+      responses:
+        '200':
+          description: "AI Coach Advice"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachAdviceResponse'
+        '400':
+          description: "Complete performance data is required"
+
+  /chatbot/sessions:
+    get:
+      tags: [AI]
+      summary: "Get user's chat sessions"
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: "A list of chat sessions"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatSession'
+
+  /chatbot/sessions/{id}/messages:
+    get:
+      tags: [AI]
+      summary: "Get messages for a specific chat session"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: "A list of chat messages"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatMessage'
+        '403':
+          description: "Unauthorized to view this session"
+        '404':
+          description: "Session not found"
