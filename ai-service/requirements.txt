@@ -109,7 +109,6 @@ scikit-learn
 lightgbm
 langchain-huggingface
 sentence-transformers
-cross-encoder
 typing-extensions
 pydantic
 psycopg2-binary
