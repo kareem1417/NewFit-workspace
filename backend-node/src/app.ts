@@ -17,7 +17,7 @@ import fs from 'fs';
 import path from 'path';
 const app: Application = express();
 
-const swaggerPath = path.join(__dirname, 'swagger-output.json');
+const swaggerPath = path.join(__dirname, '../swagger-output.json');
 const swaggerDocument = JSON.parse(fs.readFileSync(swaggerPath, 'utf-8'));
 app.use(express.json());
 app.use(cors());

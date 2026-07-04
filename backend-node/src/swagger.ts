@@ -17,8 +17,8 @@ const doc = {
         }
     }
 };
-const outputFile = path.join(__dirname, 'swagger-output.json');
-const endpointsFiles = [path.join(__dirname, 'app.ts')]; // 👈 تأكد إن ده مسار ملف السيرفر الرئيسي بتاعك
+const outputFile = path.join(__dirname, '../swagger-output.json');
+const endpointsFiles = [path.join(__dirname, 'app.ts')];
 
 // توليد ملف الـ Swagger
 swaggerAutogen()(outputFile, endpointsFiles, doc).then(() => {
