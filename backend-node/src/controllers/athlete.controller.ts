@@ -552,3 +552,293 @@ export const deleteSnapshot = async (req: AuthRequest, res: Response, next: Next
         return next(new AppError("Failed to delete snapshot.", 500));
     }
 };
+// ==========================================
+// 1. جلب قائمة الرياضات المتاحة للـ Onboarding
+// ==========================================
+export const getSportsList = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const sports = await prisma.sports.findMany({
+            where: { is_active: true },
+            select: {
+                id: true,
+                name: true,
+                description: true,
+                icon: true,
+                sport_attributes: {
+                    select: {
+                        id: true,
+                        attribute_tests: {
+                            select: { id: true }
+                        }
+                    }
+                }
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        // حساب عدد الـ tests لكل رياضة
+        const formattedSports = sports.map(sport => ({
+            id: sport.id,
+            name: sport.name,
+            description: sport.description,
+            icon: sport.icon,
+            total_attributes: sport.sport_attributes.length,
+            total_tests: sport.sport_attributes.reduce(
+                (acc, attr) => acc + attr.attribute_tests.length, 0
+            )
+        }));
+
+        res.status(200).json({ success: true, data: formattedSports });
+    } catch (error: any) {
+        console.error("Get Sports List Error:", error);
+        return next(new AppError("Failed to fetch sports list.", 500));
+    }
+};
+
+// ==========================================
+// 2. إكمال الـ Onboarding (Sport Profile + Baseline Snapshot)
+// ==========================================
+export const completeOnboarding = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { sport_id, level, weight_class, test_values } = req.body;
+
+        // 🛡️ Validation
+        if (!sport_id || !level || !weight_class || !test_values) {
+            return next(new AppError(
+                "Missing required fields: sport_id, level, weight_class, and test_values are required.",
+                400
+            ));
+        }
+
+        if (!Array.isArray(test_values) || test_values.length === 0) {
+            return next(new AppError("test_values must be a non-empty array.", 400));
+        }
+
+        // تحقق من صحة الـ sport
+        const sport = await prisma.sports.findUnique({
+            where: { id: Number(sport_id) },
+            include: {
+                sport_attributes: {
+                    include: {
+                        attribute_tests: true
+                    }
+                }
+            }
+        });
+
+        if (!sport) {
+            return next(new AppError("Sport not found.", 404));
+        }
+
+        // تحقق من صحة الـ test_values (إنها تابعة للرياضة دي)
+        const allTestIds = sport.sport_attributes.flatMap(attr =>
+            attr.attribute_tests.map(test => test.id)
+        );
+
+        for (const test of test_values) {
+            if (!allTestIds.includes(test.attribute_test_id)) {
+                return next(new AppError(
+                    `Invalid test_id: ${test.attribute_test_id} does not belong to this sport.`,
+                    400
+                ));
+            }
+        }
+
+        // 🎯 تنفيذ الـ Onboarding في Transaction واحد
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. إنشاء Sport Profile
+            const sportProfile = await tx.user_sport_profiles.create({
+                data: {
+                    user_id: userId,
+                    sport_id: Number(sport_id),
+                    level,
+                    weight_class,
+                    is_primary: true,
+                },
+            });
+
+            // 2. إنشاء Baseline Snapshot
+            const snapshot = await tx.physical_snapshots.create({
+                data: {
+                    user_id: userId,
+                    sport_id: Number(sport_id),
+                    snapshot_type: 'initial_onboarding',
+                    notes: `Initial onboarding baseline assessment for ${sport.name}`,
+                },
+            });
+
+            // 3. إضافة الـ Test Values
+            const testValuesData = test_values.map((test: any) => ({
+                snapshot_id: snapshot.id,
+                attribute_test_id: test.attribute_test_id,
+                value: test.value,
+                unit: test.unit || 'unknown',
+            }));
+
+            await tx.snapshot_test_values.createMany({
+                data: testValuesData,
+            });
+
+            // 4. (اختياري) تحديث user_metrics لو مش موجودة
+            // هنعملها بعدين لو احتجنا
+
+            return {
+                sportProfile,
+                snapshot,
+                testCount: testValuesData.length
+            };
+        });
+
+        res.status(201).json({
+            success: true,
+            message: "Onboarding completed successfully!",
+            data: {
+                sport_profile_id: result.sportProfile.id,
+                baseline_snapshot_id: result.snapshot.id,
+                tests_logged: result.testCount,
+                sport_name: sport.name,
+                level,
+                weight_class,
+            },
+        });
+        const existingProfile = await prisma.user_sport_profiles.findFirst({
+            where: { user_id: userId, is_primary: true }
+        });
+        if (existingProfile) {
+            return next(new AppError("Onboarding already completed. Use settings to update profile.", 409));
+        }
+
+    } catch (error: any) {
+        console.error("Complete Onboarding Error:", error);
+        return next(new AppError(error.message || "Failed to complete onboarding.", 500));
+    }
+};
+
+// ==========================================
+// 3. معرفة حالة الـ Onboarding
+// ==========================================
+export const getOnboardingStatus = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+
+        // 1. جلب الـ Sport Profile الأساسي
+        const sportProfile = await prisma.user_sport_profiles.findFirst({
+            where: { user_id: userId, is_primary: true },
+            include: {
+                sports: {
+                    select: {
+                        id: true,
+                        name: true,
+                        icon: true,
+                    }
+                }
+            }
+        });
+
+        // 2. جلب الـ User Metrics
+        const metrics = await prisma.user_metrics.findUnique({
+            where: { user_id: userId }
+        });
+
+        // 3. جلب أحدث Snapshot (عشان نشوف إذا كان في Baseline)
+        const latestSnapshot = await prisma.physical_snapshots.findFirst({
+            where: {
+                user_id: userId,
+                snapshot_type: 'initial_onboarding'
+            },
+            orderBy: { created_at: 'desc' },
+            include: {
+                snapshot_test_values: {
+                    take: 1 // عشان نشوف لو في قياسات أصلاً
+                }
+            }
+        });
+
+        // 🎯 حساب الـ Status
+        const hasSportProfile = !!sportProfile;
+        const hasMetrics = !!metrics;
+        const hasBaselineSnapshot = !!latestSnapshot && latestSnapshot.snapshot_test_values.length > 0;
+
+        // هل الـ Onboarding مكتمل؟
+        const isComplete = hasSportProfile && hasMetrics && hasBaselineSnapshot;
+
+        // إيه الخطوة الناقصة؟
+        let missingSteps: string[] = [];
+        if (!hasSportProfile) missingSteps.push('sport_profile');
+        if (!hasMetrics) missingSteps.push('user_metrics');
+        if (!hasBaselineSnapshot) missingSteps.push('baseline_snapshot');
+
+        // Progress Percentage
+        let progressPercentage = 0;
+        if (hasSportProfile) progressPercentage += 33;
+        if (hasMetrics) progressPercentage += 33;
+        if (hasBaselineSnapshot) progressPercentage += 34;
+
+        res.status(200).json({
+            success: true,
+            data: {
+                is_complete: isComplete,
+                progress_percentage: progressPercentage,
+                missing_steps: missingSteps,
+                sport_profile: sportProfile ? {
+                    id: sportProfile.id,
+                    sport_id: sportProfile.sport_id,
+                    sport_name: sportProfile.sports?.name,
+                    level: sportProfile.level,
+                    weight_class: sportProfile.weight_class,
+                } : null,
+                has_metrics: hasMetrics,
+                has_baseline: hasBaselineSnapshot,
+                baseline_snapshot_id: latestSnapshot?.id || null,
+            }
+        });
+
+    } catch (error: any) {
+        console.error("Get Onboarding Status Error:", error);
+        return next(new AppError("Failed to get onboarding status.", 500));
+    }
+};
+
+// ==========================================
+// 4. Middleware: التحقق من إكمال الـ Onboarding
+// ==========================================
+export const requireOnboarding = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+
+        const [sportProfile, metrics, snapshot] = await Promise.all([
+            prisma.user_sport_profiles.findFirst({
+                where: { user_id: userId, is_primary: true }
+            }),
+            prisma.user_metrics.findUnique({
+                where: { user_id: userId }
+            }),
+            prisma.physical_snapshots.findFirst({
+                where: {
+                    user_id: userId,
+                    snapshot_type: 'initial_onboarding'
+                }
+            })
+        ]);
+
+        if (!sportProfile || !metrics || !snapshot) {
+            return next(new AppError(
+                "Onboarding incomplete. Please complete your athlete profile first.",
+                403
+            ));
+        }
+
+        // حفظ البيانات في req عشان الاستخدام بعدين
+        req.onboarding = {
+            sportProfile,
+            metrics,
+            snapshot
+        };
+
+        next();
+    } catch (error: any) {
+        console.error("Require Onboarding Middleware Error:", error);
+        return next(new AppError("Failed to verify onboarding status.", 500));
+    }
+};

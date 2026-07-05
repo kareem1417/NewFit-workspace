@@ -97,3 +97,15 @@ export const getMyEnrollmentsValidation: ValidationChain[] = [
 export const sportIdParamValidation: ValidationChain[] = [
   param("sport_id").isInt({ min: 1 }).withMessage("Sport ID must be a valid positive integer.")
 ];
+// ==========================================
+// 6. Onboarding Validation
+// ==========================================
+export const completeOnboardingValidation: ValidationChain[] = [
+  body("sport_id").isInt({ min: 1 }).withMessage("sport_id must be a valid integer."),
+  body("level").notEmpty().withMessage("level is required.").isIn(Object.values(competitive_level)).withMessage("Invalid competitive level."),
+  body("weight_class").notEmpty().withMessage("weight_class is required.").isIn(Object.values(weight_class)).withMessage("Invalid weight class."),
+  body("test_values").isArray({ min: 1 }).withMessage("test_values array is required."),
+  body("test_values.*.attribute_test_id").isInt().withMessage("Each test value must have a valid attribute_test_id."),
+  body("test_values.*.value").isNumeric().withMessage("Each test value must have a numeric 'value'."),
+  body("test_values.*.unit").optional().isString().withMessage("Unit must be a string.")
+];

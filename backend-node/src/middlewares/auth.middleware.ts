@@ -1,11 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { user_sport_profiles, user_metrics, physical_snapshots } from '@prisma/client';
 
 export interface AuthRequest extends Request {
     user?: {
         sub: string;
         username: string;
         role: string;
+    };
+    onboarding?: {
+        sportProfile: user_sport_profiles;
+        metrics: user_metrics;
+        snapshot: physical_snapshots;
     };
 }
 
