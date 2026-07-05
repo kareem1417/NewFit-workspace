@@ -49,7 +49,7 @@ router.get('/baseline-tests/:sport_id', authenticateToken, sportIdParamValidatio
 // ==========================================
 // Onboarding Routes (NEW)
 // ==========================================
-router.get('/sports', authenticateToken, getSportsList);
+router.get('/sports', getSportsList);
 router.get('/onboarding/status', authenticateToken, getOnboardingStatus);
 router.post('/onboarding/complete', authenticateToken, completeOnboarding);
 

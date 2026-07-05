@@ -189,36 +189,18 @@ export const updateSportProfile = async (req: AuthRequest, res: Response, next: 
 };
 export const getSportBaselineTests = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const sportId = parseInt(req.params.sport_id as any);
-
-        if (isNaN(sportId)) {
-            return next(new AppError("Invalid sport ID.", 400));
-        }
-
-        const sportExists = await prisma.sports.findUnique({ where: { id: sportId } });
-        if (!sportExists) {
-            return next(new AppError("Sport not found.", 404));
-        }
+        const { sport_id } = req.params;
 
         const attributes = await prisma.sport_attributes.findMany({
-            where: { sport_id: sportId },
+            where: { sport_id: Number(sport_id) }, // 💡 ده الفلتر اللي كان ناقص
             include: {
-                attribute_tests: {
-                    select: {
-                        id: true,
-                        test_name: true,
-                        unit: true,
-                        higher_is_better: true,
-                        description: true
-                    }
-                }
+                attribute_tests: true // 💡 بنجيب التيستات التابعة لكل Attribute
             },
-            orderBy: { display_order: 'asc' } // عشان نطلعهم بالترتيب المنطقي في الـ UI
+            orderBy: { display_order: 'asc' }
         });
 
         res.status(200).json({ success: true, data: attributes });
     } catch (error: any) {
-        console.error("Get Sport Baseline Tests Error:", error);
         return next(new AppError("Failed to fetch baseline tests.", 500));
     }
 };
