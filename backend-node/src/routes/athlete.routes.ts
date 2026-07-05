@@ -5,12 +5,12 @@ import {
     createSportProfile, updateSportProfile, getSportProfile, deleteSportProfile,
     upsertUserMetrics, getUserMetrics, deleteUserMetrics,
     createSnapshot, getSnapshots, deleteSnapshot,
-    getRadarData, getProgress, getMyEnrollments
+    getRadarData, getProgress, getMyEnrollments, getSportBaselineTests
 } from '../controllers/athlete.controller';
 import {
     createSportProfileValidation, updateSportProfileValidation, upsertMetricsValidation,
     createSnapshotValidation, getSnapshotsValidation, radarValidation,
-    progressValidation, getMyEnrollmentsValidation, idParamValidation
+    progressValidation, getMyEnrollmentsValidation, idParamValidation, sportIdParamValidation
 } from '../validators/athlete.validator';
 
 const router = Router();
@@ -43,5 +43,7 @@ router.delete('/snapshots/:id', authenticateToken, idParamValidation, validate, 
 router.get('/radar', authenticateToken, radarValidation, validate, getRadarData);
 router.get('/progress', authenticateToken, progressValidation, validate, getProgress);
 router.get('/enrollments', authenticateToken, getMyEnrollmentsValidation, validate, getMyEnrollments);
+/////////////// 
+router.get('/baseline-tests/:sport_id', authenticateToken, sportIdParamValidation, validate, getSportBaselineTests);
 
 export default router;

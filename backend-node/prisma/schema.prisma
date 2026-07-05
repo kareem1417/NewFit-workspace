@@ -23,6 +23,7 @@ model attribute_tests {
   test_name            String                 @db.VarChar(100)
   weight               Decimal                @db.Decimal(5, 4)
   unit                 String                 @db.VarChar(20)
+  icon            String?           @db.VarChar(255) 
   higher_is_better     Boolean?               @default(true)
   description          String?
   created_at           DateTime?              @default(now()) @db.Timestamptz(6)
@@ -475,10 +476,14 @@ enum weight_class {
 enum user_goal_enum {
   Weight_Loss @map("Weight Loss")
   Muscle_Gain @map("Muscle Gain")
-  Endurance
-  Strength
-  Agility
-  Speed
+  Endurance   @map("Endurance")
+  Strength    @map("Strength")
+  Agility     @map("Agility")
+  Speed       @map("Speed")
+  Flexibility @map("Flexibility")
+  Recovery    @map("Recovery")
+  Power       @map("Power")
+  General     @map("General")
 }
 
 model completed_sessions {

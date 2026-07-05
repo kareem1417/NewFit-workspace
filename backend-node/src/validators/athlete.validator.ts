@@ -47,12 +47,13 @@ export const upsertMetricsValidation: ValidationChain[] = [
   body("years_training").isNumeric().withMessage("Years training must be a number."),
   body("has_injury_history").optional().isBoolean().withMessage("Injury history must be a boolean."),
   // Scores
-  body("endurance_score").optional().isNumeric(),
-  body("strength_score").optional().isNumeric(),
-  body("speed_score").optional().isNumeric(),
-  body("flexibility_score").optional().isNumeric(),
-  body("explosiveness_score").optional().isNumeric(),
-  body("recovery_score").optional().isNumeric(),
+  // Scores
+  body("endurance_score").optional().isInt({ min: 1, max: 10 }).withMessage("Score must be between 1 and 10."),
+  body("strength_score").optional().isInt({ min: 1, max: 10 }).withMessage("Score must be between 1 and 10."),
+  body("speed_score").optional().isInt({ min: 1, max: 10 }).withMessage("Score must be between 1 and 10."),
+  body("flexibility_score").optional().isInt({ min: 1, max: 10 }).withMessage("Score must be between 1 and 10."),
+  body("explosiveness_score").optional().isInt({ min: 1, max: 10 }).withMessage("Score must be between 1 and 10."),
+  body("recovery_score").optional().isInt({ min: 1, max: 10 }).withMessage("Score must be between 1 and 10."),
 ];
 
 // ==========================================
@@ -89,4 +90,10 @@ export const progressValidation: ValidationChain[] = [
 // ==========================================
 export const getMyEnrollmentsValidation: ValidationChain[] = [
   query("status").optional().isIn(Object.values(enrollment_status)).withMessage("Invalid enrollment status.")
+];
+// ==========================================
+// Reusable Sport ID Param Validator
+// ==========================================
+export const sportIdParamValidation: ValidationChain[] = [
+  param("sport_id").isInt({ min: 1 }).withMessage("Sport ID must be a valid positive integer.")
 ];
