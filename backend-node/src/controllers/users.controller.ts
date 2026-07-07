@@ -4,7 +4,7 @@ import { prisma } from "../config/prisma";
 import { v2 as cloudinary } from "cloudinary";
 import { AppError } from "../utils/AppError";
 
-// Works without Validator 
+// Works without Validator
 export const deactivateAccount = async (
   req: AuthRequest,
   res: Response,
@@ -19,7 +19,6 @@ export const deactivateAccount = async (
         where: { id: userId },
         data: { is_active: false },
       }),
-
 
       prisma.user_tokens.deleteMany({
         where: { user_id: userId, token_type: "REFRESH" },
@@ -37,8 +36,12 @@ export const deactivateAccount = async (
   }
 };
 
-// works good without Validator 
-export const getMe = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+// works good without Validator
+export const getMe = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
 
@@ -56,7 +59,6 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
       return next(new AppError("User not found.", 404));
     }
 
-
     const { password_hash, ...safeUserData } = user;
 
     res.status(200).json({
@@ -70,7 +72,11 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
 };
 
 // Done
-export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const uploadPhoto = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
     const file = (req as any).file;
@@ -89,7 +95,6 @@ export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFun
       }
     }
 
-
     const updatedUser = await prisma.users.update({
       where: { id: userId },
       data: { profile_photo: photoUrl },
@@ -99,13 +104,14 @@ export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFun
       success: true,
       profile_photo_url: updatedUser.profile_photo,
     });
-
   } catch (error: any) {
     if (
       error.message?.includes("format pdf not allowed") ||
       error.http_code === 400
     ) {
-      return next(new AppError("Invalid file type — only JPEG, PNG, WEBP accepted.", 400));
+      return next(
+        new AppError("Invalid file type — only JPEG, PNG, WEBP accepted.", 400),
+      );
     }
 
     if (error.message?.includes("limit") || error.message?.includes("large")) {
@@ -116,15 +122,18 @@ export const uploadPhoto = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
-// Done 
+// Done
 export const updateMe = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    const { bio, username, social_links, role_models, role } = req.body;
+
+    // 📌 ضفنا full_name في الـ destructuring
+    const { full_name, bio, username, social_links, role_models, role } =
+      req.body;
 
     if (username) {
       const sanitizedUsername = username.trim();
@@ -133,12 +142,17 @@ export const updateMe = async (
         where: {
           username: {
             equals: sanitizedUsername,
-            mode: 'insensitive'
-          }
+            mode: "insensitive",
+          },
         },
       });
       console.log("DEBUG UPDATE_ME -> Current User ID:", userId);
-      console.log("DEBUG UPDATE_ME -> Found Existing User:", existingUser ? { id: existingUser.id, username: existingUser.username } : "Not Found");
+      console.log(
+        "DEBUG UPDATE_ME -> Found Existing User:",
+        existingUser
+          ? { id: existingUser.id, username: existingUser.username }
+          : "Not Found",
+      );
 
       if (existingUser) {
         if (existingUser.id !== userId) {
@@ -146,9 +160,13 @@ export const updateMe = async (
         }
       }
     }
+
     const updateData: any = {};
+
+    // 📌 ضفنا السطر ده عشان يجهز الـ full_name للتحديث
+    if (full_name !== undefined) updateData.full_name = full_name.trim();
     if (bio !== undefined) updateData.bio = bio;
-    if (username !== undefined) updateData.username = username.trim(); // حفظ الاسم نضيف
+    if (username !== undefined) updateData.username = username.trim();
     if (social_links !== undefined) updateData.social_links = social_links;
     if (role_models !== undefined) updateData.role_models = role_models;
     if (role !== undefined) updateData.role = role;
@@ -164,17 +182,16 @@ export const updateMe = async (
       },
     });
     const { password_hash, ...safeUserData } = updatedUser;
+
     res.status(200).json({
       success: true,
       message: "Profile updated successfully.",
       data: safeUserData,
     });
-
   } catch (error) {
     next(error);
   }
 };
-
 // export const getPublicProfile = async (
 //   req: AuthRequest,
 //   res: Response,
@@ -201,7 +218,7 @@ export const updateMe = async (
 //     }
 
 //     const targetUser = await prisma.users.findUnique({
-//       where: { id: targetUserId as string }, 
+//       where: { id: targetUserId as string },
 //       include: {
 //         user_sport_profiles: {
 //           where: { is_primary: true },
@@ -246,11 +263,11 @@ export const updateMe = async (
 //   }
 // };
 
-//  i think it works in success format 
+//  i think it works in success format
 export const getPublicProfile = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const targetUserId = req.query.user_id as string;
@@ -272,8 +289,12 @@ export const getPublicProfile = async (
       return next(new AppError("User not found.", 404));
     }
 
-    const followersCount = await prisma.follows.count({ where: { followee_id: targetUserId } });
-    const followingCount = await prisma.follows.count({ where: { follower_id: targetUserId } });
+    const followersCount = await prisma.follows.count({
+      where: { followee_id: targetUserId },
+    });
+    const followingCount = await prisma.follows.count({
+      where: { follower_id: targetUserId },
+    });
 
     let is_following = false;
     if (requestingUserId && requestingUserId !== targetUserId) {
@@ -291,7 +312,9 @@ export const getPublicProfile = async (
     const userAny = targetUser as any;
     const sportProfiles = userAny.user_sport_profiles || [];
 
-    const cleanedSportProfiles = sportProfiles.map(({ user_id, ...rest }: any) => rest);
+    const cleanedSportProfiles = sportProfiles.map(
+      ({ user_id, ...rest }: any) => rest,
+    );
 
     const { password_hash, email, date_of_birth, ...publicData } = userAny;
 

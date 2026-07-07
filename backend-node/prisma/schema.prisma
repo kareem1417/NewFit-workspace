@@ -7,7 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model age_groups {
   id             Int              @id @default(autoincrement())
   name           String           @db.VarChar(50)
@@ -23,7 +22,7 @@ model attribute_tests {
   test_name            String                 @db.VarChar(100)
   weight               Decimal                @db.Decimal(5, 4)
   unit                 String                 @db.VarChar(20)
-  icon                 String?                @db.VarChar(255) 
+  icon                 String?                @db.VarChar(255)
   higher_is_better     Boolean?               @default(true)
   description          String?
   created_at           DateTime?              @default(now()) @db.Timestamptz(6)
@@ -96,7 +95,6 @@ model enrollments {
   @@index([user_id], map: "enrollments_user_idx")
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model follows {
   follower_id                      String    @db.Uuid
   followee_id                      String    @db.Uuid
@@ -114,16 +112,11 @@ model knowledge_chunks {
   content      String
   source       String? @db.VarChar(255)
   content_type String? @default("general") @db.VarChar(50)
-
-  // 📌 السطرين دول اللي هيحموا الداتا بتاعتك من المسح
-  sport String? @db.VarChar(100)
-  topic String? @db.VarChar(100)
-
-  embedding  Json?
-  metadata   Json?                  @default("{}")
-  created_at DateTime?              @default(now()) @db.Timestamptz(6)
-
-  // @@index([embedding], map: "knowledge_embedding_idx")
+  sport        String? @db.VarChar(100)
+  topic        String? @db.VarChar(100)
+  embedding    Json?
+  metadata     Json?                  @default("{}")
+  created_at   DateTime?              @default(now()) @db.Timestamptz(6)
 }
 
 model likes {
@@ -140,7 +133,7 @@ model normative_data {
   id                Int               @id @default(autoincrement())
   sport_id          Int
   attribute_test_id Int
-  weight_class      weight_class
+  player_category   player_category   // 📌 تم التعديل هنا
   level             competitive_level
   age_group_id      Int
   mean_value        Decimal           @db.Decimal(10, 2)
@@ -153,7 +146,7 @@ model normative_data {
   attribute_tests   attribute_tests   @relation(fields: [attribute_test_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   sports            sports            @relation(fields: [sport_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([sport_id, attribute_test_id, weight_class, level, age_group_id])
+  @@unique([sport_id, attribute_test_id, player_category, level, age_group_id]) // 📌 تم التعديل هنا
 }
 
 model physical_snapshots {
@@ -209,7 +202,6 @@ model program_blocks {
   @@unique([program_id, order_index])
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model program_ratings {
   id            String      @id @default(uuid()) @db.Uuid
   enrollment_id String      @db.Uuid
@@ -328,16 +320,16 @@ model sports {
 }
 
 model user_sport_profiles {
-  id           String            @id @default(uuid()) @db.Uuid
-  user_id      String            @db.Uuid
-  sport_id     Int
-  level        competitive_level
-  weight_class weight_class
-  is_primary   Boolean?          @default(true)
-  created_at   DateTime?         @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime?         @default(now()) @db.Timestamptz(6)
-  sports       sports            @relation(fields: [sport_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users        users             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id              String            @id @default(uuid()) @db.Uuid
+  user_id         String            @db.Uuid
+  sport_id        Int
+  level           competitive_level
+  player_category player_category   // 📌 تم التعديل هنا
+  is_primary      Boolean?          @default(true)
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  sports          sports            @relation(fields: [sport_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users           users             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([user_id, sport_id])
 }
@@ -353,7 +345,6 @@ model user_tokens {
   users         users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
-// 📌 الجدول الجديد الخاص بالقياسات (يتم ربطه باليوزر 1-to-1)
 model user_metrics {
   id                     String         @id @default(uuid()) @db.Uuid
   user_id                String         @unique @db.Uuid
@@ -363,22 +354,19 @@ model user_metrics {
   training_days_per_week Int
   years_training         Decimal        @db.Decimal(4, 2)
   has_injury_history     Boolean        @default(false)
-
-  // التقييمات من 1 لـ 10
   endurance_score     Int @default(5)
   strength_score      Int @default(5)
   speed_score         Int @default(5)
   flexibility_score   Int @default(5)
   explosiveness_score Int @default(5)
   recovery_score      Int @default(5)
-
   created_at DateTime? @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
-
   users users @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model users {
+  full_name                          String?                @db.VarChar(100)
   id                                 String                 @id @default(uuid()) @db.Uuid
   username                           String                 @unique @db.VarChar(50)
   email                              String                 @unique @db.VarChar(255)
@@ -405,8 +393,6 @@ model users {
   programs                           programs[]
   user_sport_profiles                user_sport_profiles[]
   user_tokens                        user_tokens[]
-
-  // 📌 تم إضافة العلاقة هنا
   user_metrics      user_metrics?
   completedSessions completed_sessions[]
 
@@ -457,7 +443,8 @@ enum user_role {
   admin
 }
 
-enum weight_class {
+// 📌 تم التعديل بالكامل هنا ليدعم المراكز والأوزان
+enum player_category {
   flyweight
   bantamweight
   featherweight
@@ -470,9 +457,22 @@ enum weight_class {
   light_heavyweight
   cruiserweight
   heavyweight
+  goalkeeper
+  center_back
+  full_back
+  defensive_midfielder
+  central_midfielder
+  attacking_midfielder
+  winger
+  striker
+  point_guard
+  shooting_guard
+  small_forward
+  power_forward
+  center
+  not_applicable
 }
 
-// 📌 الـ Enum الجديد الخاص بأهداف اليوزر
 enum user_goal_enum {
   Weight_Loss @map("Weight Loss")
   Muscle_Gain @map("Muscle Gain")
@@ -491,12 +491,11 @@ model completed_sessions {
   user_id            String   @db.Uuid
   enrollment_id      String   @db.Uuid
   program_session_id String   @db.Uuid
-  rpe                Int? // معدل الإجهاد من 1 لـ 10
-  duration_minutes   Int? // التمرين أخد وقت قد إيه
+  rpe                Int?
+  duration_minutes   Int?
   notes              String?
   created_at         DateTime @default(now()) @db.Timestamptz(6)
 
-  // العلاقات
   users              users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
   enrollments        enrollments        @relation(fields: [enrollment_id], references: [id], onDelete: Cascade)
   program_sessions   program_sessions   @relation(fields: [program_session_id], references: [id], onDelete: Cascade)
@@ -507,11 +506,10 @@ model completed_exercises {
   id                   String   @id @default(uuid()) @db.Uuid
   completed_session_id String   @db.Uuid
   session_exercise_id  String   @db.Uuid
-  sets_data            Json // الداتا الفعلية زي: [{set: 1, reps: 8, weight: 50}]
+  sets_data            Json
   notes                String?
   created_at           DateTime @default(now()) @db.Timestamptz(6)
 
-  // العلاقات
   completed_sessions completed_sessions @relation(fields: [completed_session_id], references: [id], onDelete: Cascade)
   session_exercises  session_exercises  @relation(fields: [session_exercise_id], references: [id], onDelete: Cascade)
 }

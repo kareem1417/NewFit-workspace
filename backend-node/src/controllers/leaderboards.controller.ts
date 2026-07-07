@@ -1,7 +1,7 @@
 import { Response, NextFunction } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { prisma } from "../config/prisma";
-import { competitive_level, weight_class } from "@prisma/client";
+import { competitive_level, player_category } from "@prisma/client";
 import {
   calculateZScore,
   calculatePercentile,
@@ -34,10 +34,10 @@ const getAgeGroupId = (
 };
 
 const getAdjacentWeightClasses = (
-  weightClass: weight_class,
-): weight_class[] => {
-  if (!weightClass) return [];
-  const classes: weight_class[] = [
+  category: player_category,
+): player_category[] => {
+  if (!category) return [];
+  const classes: player_category[] = [
     "flyweight",
     "bantamweight",
     "featherweight",
@@ -51,9 +51,9 @@ const getAdjacentWeightClasses = (
     "cruiserweight",
     "heavyweight",
   ];
-  const idx = classes.indexOf(weightClass);
+  const idx = classes.indexOf(category);
   if (idx === -1) return [];
-  const adjacent: weight_class[] = [];
+  const adjacent: player_category[] = [];
   if (idx > 0) adjacent.push(classes[idx - 1]);
   if (idx < classes.length - 1) adjacent.push(classes[idx + 1]);
   return adjacent;
@@ -64,31 +64,31 @@ const getPercentileForTest = async (
   rawValue: number,
   higherIsBetter: boolean,
   userLevel: competitive_level | undefined | null,
-  userWeight: weight_class | undefined | null,
+  userCategory: player_category | undefined | null,
   userAgeGroupId: number,
 ): Promise<number> => {
   const safeRawValue = Math.max(0, rawValue);
 
   const fallbackSteps: any[] = [
     {
-      weight: userWeight || undefined,
+      category: userCategory || undefined,
       level: userLevel || undefined,
       ageGroup: userAgeGroupId,
     },
     {
-      weight: userWeight || undefined,
+      category: userCategory || undefined,
       level: userLevel || undefined,
       ageGroup: undefined,
     },
     {
-      weight: userWeight
-        ? { in: getAdjacentWeightClasses(userWeight) }
+      category: userCategory
+        ? { in: getAdjacentWeightClasses(userCategory) }
         : undefined,
       level: userLevel || undefined,
       ageGroup: undefined,
     },
-    { weight: undefined, level: userLevel || undefined, ageGroup: undefined },
-    { weight: undefined, level: undefined, ageGroup: undefined },
+    { category: undefined, level: userLevel || undefined, ageGroup: undefined },
+    { category: undefined, level: undefined, ageGroup: undefined },
   ];
 
   try {
@@ -96,7 +96,7 @@ const getPercentileForTest = async (
       const norm = await prisma.normative_data.findFirst({
         where: {
           attribute_test_id: testId,
-          ...(step.weight && { weight_class: step.weight }),
+          ...(step.category && { player_category: step.category }),
           ...(step.level && { level: step.level }),
           ...(step.ageGroup && { age_group_id: step.ageGroup }),
         },
@@ -128,7 +128,7 @@ const getUserCompositeScore = async (
   userId: string,
   testIds: number[],
   userLevel: competitive_level | undefined | null,
-  userWeight: weight_class | undefined | null,
+  userCategory: player_category | undefined | null,
   userAgeGroupId: number,
 ): Promise<number> => {
   try {
@@ -160,7 +160,7 @@ const getUserCompositeScore = async (
         Number(testVal.value),
         testVal.attribute_tests?.higher_is_better ?? true,
         userLevel,
-        userWeight,
+        userCategory,
         userAgeGroupId,
       );
 
@@ -181,7 +181,7 @@ async function getCompositeScoreFromSnapshot(
   snapshotId: string,
   testIds: number[],
   level: competitive_level,
-  weightClass: weight_class,
+  category: player_category,
   ageGroupId: number,
 ): Promise<number> {
   try {
@@ -212,7 +212,7 @@ async function getCompositeScoreFromSnapshot(
         Number(tv.value),
         tv.attribute_tests?.higher_is_better ?? true,
         level,
-        weightClass,
+        category,
         ageGroupId,
       );
       totalPercentile += pct;
@@ -253,17 +253,22 @@ export const getLeaderboard = async (
     });
 
     if (!currentUserProfile) {
-      return next(new AppError("Cannot determine cohort — create sport profile first.", 400));
+      return next(
+        new AppError(
+          "Cannot determine cohort — create sport profile first.",
+          400,
+        ),
+      );
     }
 
-    const weightClass: weight_class =
-      (req.query.weight_class as weight_class) ||
-      currentUserProfile.weight_class;
+    const category: player_category =
+      (req.query.player_category as player_category) ||
+      currentUserProfile.player_category;
     const level: competitive_level =
       (req.query.level as competitive_level) || currentUserProfile.level;
 
     const cohortUsers = await prisma.user_sport_profiles.findMany({
-      where: { weight_class: weightClass, level: level, is_primary: true },
+      where: { player_category: category, level: level, is_primary: true },
       select: { user_id: true },
     });
     const cohortUserIds = cohortUsers.map((p) => p.user_id);
@@ -302,7 +307,7 @@ export const getLeaderboard = async (
           uid,
           selectedTestIds,
           level,
-          weightClass,
+          category,
           ageGroup,
         );
 
@@ -315,7 +320,7 @@ export const getLeaderboard = async (
           username: userInfo?.username || "Unknown",
           profile_photo: userInfo?.profile_photo || null,
           [`${type}_score`]: Number(compositeScore.toFixed(2)),
-          weight_class: weightClass,
+          player_category: category,
           level: level,
           is_current_user: uid === userId,
           score: compositeScore,
@@ -331,7 +336,7 @@ export const getLeaderboard = async (
       return { rank: idx + 1, ...cleanItem };
     });
 
-    // تطبيق الـ Pagination 
+    // تطبيق الـ Pagination
     const paginatedData = leaderboardData.slice(offset, offset + limit);
 
     // التأكد إن اللاعب الحالي موجود في الرد، حتى لو مش في الصفحة الحالية
@@ -372,14 +377,14 @@ export const getMostImproved = async (
       return next(new AppError("Cannot determine cohort.", 400));
     }
 
-    const weightClass: weight_class =
-      (req.query.weight_class as weight_class) ||
-      currentUserProfile.weight_class;
+    const category: player_category =
+      (req.query.player_category as player_category) ||
+      currentUserProfile.player_category;
     const level: competitive_level =
       (req.query.level as competitive_level) || currentUserProfile.level;
 
     const cohortUsers = await prisma.user_sport_profiles.findMany({
-      where: { weight_class: weightClass, level: level, is_primary: true },
+      where: { player_category: category, level: level, is_primary: true },
       select: { user_id: true },
     });
     const cohortUserIds = cohortUsers.map((p) => p.user_id);
@@ -404,7 +409,7 @@ export const getMostImproved = async (
     const rawImprovedResults: any[] = await prisma.$queryRaw`
       WITH cohort_users AS (
           SELECT user_id FROM user_sport_profiles
-          WHERE is_primary = true AND weight_class::text = ${weightClass} AND level::text = ${level}
+          WHERE is_primary = true AND player_category::text = ${category} AND level::text = ${level}
       ),
       snapshots_in_range AS (
           SELECT id, user_id, created_at
@@ -445,14 +450,14 @@ export const getMostImproved = async (
             ath.first_snapshot_id,
             punchPowerTestIds,
             level,
-            weightClass,
+            category,
             ageGroup,
           );
           const lastScore = await getCompositeScoreFromSnapshot(
             ath.last_snapshot_id,
             punchPowerTestIds,
             level,
-            weightClass,
+            category,
             ageGroup,
           );
           const improvement = lastScore - firstScore;
@@ -491,7 +496,10 @@ export const getMostImproved = async (
     }
 
     // تنظيف الـ ID الداخلي وتحويله لـ user_id قبل الإرجاع النهائي
-    const finalData = paginatedData.map(({ id, ...rest }) => ({ user_id: id, ...rest }));
+    const finalData = paginatedData.map(({ id, ...rest }) => ({
+      user_id: id,
+      ...rest,
+    }));
 
     res.status(200).json(finalData);
   } catch (error: any) {

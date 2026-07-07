@@ -1,0 +1,35 @@
+export const SPORT_CATEGORIES = {
+  1: [
+    "flyweight",
+    "bantamweight",
+    "featherweight",
+    "lightweight",
+    "light_welterweight",
+    "welterweight",
+    "light_middleweight",
+    "middleweight",
+    "super_middleweight",
+    "light_heavyweight",
+    "cruiserweight",
+    "heavyweight",
+  ],
+
+  2: [
+    "goalkeeper",
+    "center_back",
+    "full_back",
+    "defensive_midfielder",
+    "central_midfielder",
+    "attacking_midfielder",
+    "winger",
+    "striker",
+  ],
+
+  3: [
+    "point_guard",
+    "shooting_guard",
+    "small_forward",
+    "power_forward",
+    "center",
+  ],
+};

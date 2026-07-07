@@ -1,62 +1,192 @@
-import { Router } from 'express';
-import { authenticateToken } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validation.middleware';
+import { Router } from "express";
+import { authenticateToken } from "../middlewares/auth.middleware";
+import { validate } from "../middlewares/validation.middleware";
+
 import {
-    createSportProfile, updateSportProfile, getSportProfile, deleteSportProfile,
-    upsertUserMetrics, getUserMetrics, deleteUserMetrics,
-    createSnapshot, getSnapshots, deleteSnapshot,
-    getRadarData, getProgress, getMyEnrollments, getSportBaselineTests,
-    getSportsList, getOnboardingStatus, completeOnboarding
-} from '../controllers/athlete.controller';
+  createSportProfile,
+  getSportProfile,
+  updateSportProfile,
+  deleteSportProfile,
+  upsertUserMetrics,
+  getUserMetrics,
+  deleteUserMetrics,
+  getSportBaselineTests,
+  createSnapshot,
+  getSnapshots,
+  getLatestSnapshot,
+  deleteSnapshot,
+  getRadarData,
+  getProgress,
+  getMyEnrollments,
+  getSportsList,
+  getSportCategories,
+  completeOnboarding,
+  getOnboardingStatus,
+  getAthleteDashboard,
+} from "../controllers/athlete.controller";
+
 import {
-    createSportProfileValidation, updateSportProfileValidation, upsertMetricsValidation,
-    createSnapshotValidation, getSnapshotsValidation, radarValidation,
-    progressValidation, getMyEnrollmentsValidation, idParamValidation, sportIdParamValidation, completeOnboardingValidation
-} from '../validators/athlete.validator';
+  createSportProfileValidation,
+  updateSportProfileValidation,
+  upsertMetricsValidation,
+  createSnapshotValidation,
+  getSnapshotsValidation,
+  radarValidation,
+  progressValidation,
+  getMyEnrollmentsValidation,
+  idParamValidation,
+  sportIdParamValidation,
+  completeOnboardingValidation,
+} from "../validators/athlete.validator";
 
 const router = Router();
 
-// ==========================================
-// Sport Profile Routes
-// ==========================================
-router.get('/profile', authenticateToken, getSportProfile);
-router.post('/profile', authenticateToken, createSportProfileValidation, validate, createSportProfile);
-router.patch('/profile', authenticateToken, updateSportProfileValidation, validate, updateSportProfile);
-router.delete('/profile/:id', authenticateToken, idParamValidation, validate, deleteSportProfile);
+// =======================================================
+// Sports (Public)
+// =======================================================
 
-// ==========================================
-// User Metrics Routes
-// ==========================================
-router.get('/metrics', authenticateToken, getUserMetrics);
-router.post('/metrics', authenticateToken, upsertMetricsValidation, validate, upsertUserMetrics);
-router.delete('/metrics', authenticateToken, deleteUserMetrics);
+router.get("/sports", getSportsList);
 
-// ==========================================
-// Snapshots Routes
-// ==========================================
-router.post('/snapshots', authenticateToken, createSnapshotValidation, validate, createSnapshot);
-router.get('/snapshots', authenticateToken, getSnapshotsValidation, validate, getSnapshots);
-router.delete('/snapshots/:id', authenticateToken, idParamValidation, validate, deleteSnapshot);
+router.get(
+  "/sports/:sport_id/categories",
+  sportIdParamValidation,
+  validate,
+  getSportCategories,
+);
 
-// ==========================================
-// Analytics & Enrollments Routes
-// ==========================================
-router.get('/radar', authenticateToken, radarValidation, validate, getRadarData);
-router.get('/progress', authenticateToken, progressValidation, validate, getProgress);
-router.get('/enrollments', authenticateToken, getMyEnrollmentsValidation, validate, getMyEnrollments);
-/////////////// 
-router.get('/baseline-tests/:sport_id', authenticateToken, sportIdParamValidation, validate, getSportBaselineTests);
-// ==========================================
-// Onboarding Routes (NEW)
-// ==========================================
-router.get('/sports', getSportsList);
-router.get('/onboarding/status', authenticateToken, getOnboardingStatus);
-router.post('/onboarding/complete', authenticateToken, completeOnboarding);
+router.get(
+  "/sports/:sport_id/tests",
+  sportIdParamValidation,
+  validate,
+  getSportBaselineTests,
+);
 
-// ==========================================
-// Protected Routes (تتطلب إكمال الـ Onboarding)
-// ==========================================
-// هتستخدم الـ Middleware الجديد عشان تمنع الوصول لو مكملش
-// router.get('/programs/recommended', authenticateToken, requireOnboarding, getRecommendedPrograms);
-// router.post('/enroll', authenticateToken, requireOnboarding, enrollInProgram);
+// =======================================================
+// Onboarding
+// =======================================================
+
+router.post(
+  "/onboarding",
+  authenticateToken,
+  completeOnboardingValidation,
+  validate,
+  completeOnboarding,
+);
+
+router.get("/onboarding/status", authenticateToken, getOnboardingStatus);
+
+// =======================================================
+// Dashboard
+// =======================================================
+
+router.get("/dashboard", authenticateToken, getAthleteDashboard);
+
+// =======================================================
+// Sport Profile
+// =======================================================
+
+router.post(
+  "/sport-profile",
+  authenticateToken,
+  createSportProfileValidation,
+  validate,
+  createSportProfile,
+);
+
+router.get("/sport-profile", authenticateToken, getSportProfile);
+
+router.patch(
+  "/sport-profile",
+  authenticateToken,
+  updateSportProfileValidation,
+  validate,
+  updateSportProfile,
+);
+
+router.delete(
+  "/sport-profile/:id",
+  authenticateToken,
+  idParamValidation,
+  validate,
+  deleteSportProfile,
+);
+
+// =======================================================
+// Metrics
+// =======================================================
+
+router.post(
+  "/metrics",
+  authenticateToken,
+  upsertMetricsValidation,
+  validate,
+  upsertUserMetrics,
+);
+
+router.get("/metrics", authenticateToken, getUserMetrics);
+
+router.delete("/metrics", authenticateToken, deleteUserMetrics);
+
+// =======================================================
+// Snapshots
+// =======================================================
+
+router.post(
+  "/snapshots",
+  authenticateToken,
+  createSnapshotValidation,
+  validate,
+  createSnapshot,
+);
+
+router.get(
+  "/snapshots",
+  authenticateToken,
+  getSnapshotsValidation,
+  validate,
+  getSnapshots,
+);
+
+router.get("/snapshots/latest", authenticateToken, getLatestSnapshot);
+
+router.delete(
+  "/snapshots/:id",
+  authenticateToken,
+  idParamValidation,
+  validate,
+  deleteSnapshot,
+);
+
+// =======================================================
+// Analytics
+// =======================================================
+
+router.get(
+  "/radar",
+  authenticateToken,
+  radarValidation,
+  validate,
+  getRadarData,
+);
+
+router.get(
+  "/progress",
+  authenticateToken,
+  progressValidation,
+  validate,
+  getProgress,
+);
+
+// =======================================================
+// Enrollments
+// =======================================================
+
+router.get(
+  "/enrollments",
+  authenticateToken,
+  getMyEnrollmentsValidation,
+  validate,
+  getMyEnrollments,
+);
+
 export default router;

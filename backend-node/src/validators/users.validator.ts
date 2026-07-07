@@ -1,8 +1,8 @@
-import { body, query } from "express-validator";
+import { body, query, ValidationChain } from "express-validator"; // 📌 التعديل هنا (ضفنا ValidationChain)
 import { Request, Response, NextFunction } from "express";
-import { AppError } from "../utils/AppError"; // 🎯 تأكد من المسار
+import { AppError } from "../utils/AppError";
 
-export const updateMeValidation = [
+export const updateMeValidation: ValidationChain[] = [
   body("username")
     .optional()
     .trim()
@@ -14,16 +14,26 @@ export const updateMeValidation = [
     .isIn(["athlete", "coach", "admin"])
     .withMessage("Role must be either athlete, coach, or admin"),
 
+  body("full_name")
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Full name must be between 2–100 characters"),
+
   body("social_links")
     .optional()
     .custom((value) => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw new Error("Validation error — social_links must be a JSON object.");
+        throw new Error(
+          "Validation error — social_links must be a JSON object.",
+        );
       }
       for (const key in value) {
         const url = value[key];
         if (typeof url !== "string" || !url.startsWith("http")) {
-          throw new Error(`Validation error — invalid social media link for ${key}. Must start with http/https.`);
+          throw new Error(
+            `Validation error — invalid social media link for ${key}. Must start with http/https.`,
+          );
         }
       }
       return true;
@@ -41,18 +51,20 @@ export const updateMeValidation = [
     }),
 ];
 
-// 🎯 التعديل الأول: عملنا Chain للـ Public Profile عشان ننظف الكنترولر
-export const getPublicProfileValidation = [
+export const getPublicProfileValidation: ValidationChain[] = [
   query("user_id")
     .trim()
     .notEmpty()
     .withMessage("Validation error — required param missing.")
     .isUUID()
-    .withMessage("Validation error — invalid UUID.")
+    .withMessage("Validation error — invalid UUID."),
 ];
 
-// 🎯 التعديل التاني: تحويل الـ Responses لـ AppError
-export const uploadPhotoValidation = (req: Request, res: Response, next: NextFunction): void => {
+export const uploadPhotoValidation = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   const reqAny = req as any;
   const file = reqAny.file || reqAny.files?.photo;
 
@@ -68,14 +80,16 @@ export const uploadPhotoValidation = (req: Request, res: Response, next: NextFun
   const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
   const fileMime = file.mimetype || "";
   const fileName = file.name || file.filename || "";
-  const fileExtension = fileName.split('.').pop()?.toLowerCase();
+  const fileExtension = fileName.split(".").pop()?.toLowerCase();
 
   if (fileMime === "image/gif" || fileExtension === "gif") {
     return next(new AppError("Rejected — GIF not in allowed list.", 400));
   }
 
   if (fileMime && !allowedMimeTypes.includes(fileMime)) {
-    return next(new AppError("Invalid file type — only JPEG, PNG, WEBP accepted.", 400));
+    return next(
+      new AppError("Invalid file type — only JPEG, PNG, WEBP accepted.", 400),
+    );
   }
 
   next();
