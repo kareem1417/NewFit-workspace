@@ -226,17 +226,16 @@ export const listPrograms = async (
 //Validated
 // --- 4.3 Get Program By ID ---
 
+// --- 4.3 Get Program By ID (معدلة) ---
 export const getProgramById = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction,
 ): Promise<void> => {
   try {
-    const programId = req.query.program_id as string; // جلب من الـ Query
-    const userRole = req.user?.role; // الـ Role الجاي من الـ Token
-    const userId = req.user?.sub; // الـ ID بتاع المستخدم الحالي
+    const programId = req.query.program_id as string;
+    const userRole = req.user?.role;
 
-    // جلب البرنامج مع كافة العلاقات المطلوبة في الشيت
     const program = await prisma.programs.findUnique({
       where: { id: programId },
       include: {
@@ -262,20 +261,18 @@ export const getProgramById = async (
       },
     });
 
-    // 1. لو البرنامج مش موجود أصلاً في قاعدة البيانات (Non-existent program_id) -> 404
     if (!program) {
       return next(new AppError("Program not found.", 404));
     }
 
-    // 2. 🔥 سيناريو الـ Sad Path المعقد: البرنامج Draft واللاعب بيحاول يدخل عليه
     if (!program.is_published && userRole === "athlete") {
       return next(new AppError("Not found — athletes cannot see unpublished programs.", 404));
     }
 
-    // 3. ترتيب الـ Mapping والـ Formatting المفرود بدون Wrapper
     const formattedProgram = {
       id: program.id,
       title: program.title,
+      sport_id: program.sport_id, // ✅ ضفنا الـ ID بتاع الرياضة هنا
       description: program.description || "",
       goal_primary: program.goal_primary,
       level_target: program.level_target,
@@ -290,7 +287,6 @@ export const getProgramById = async (
         photo: program.users?.profile_photo || null,
         bio: program.users?.bio || "",
       },
-      // تفكيك البلوكات والـ Sessions والـ Exercises بشكل نظيف
       blocks: program.program_blocks.map((block: any) => ({
         id: block.id,
         name: block.name,
@@ -308,7 +304,7 @@ export const getProgramById = async (
             id: exercise.id,
             exercise_name: exercise.exercise_name,
             sets: exercise.sets,
-            reps: String(exercise.reps), // التأكد إنها راجعة String '5' أو '8-12' زي الشيت
+            reps: String(exercise.reps),
             rest_seconds: exercise.rest_seconds,
             intensity_note: exercise.intensity_note,
             notes: exercise.notes,
@@ -321,17 +317,15 @@ export const getProgramById = async (
         review: r.review || "",
         username: r.users?.username || "Anonymous",
         date: r.created_at,
-      })), // سميناها recent_ratings لتطابق الـ Assertion (last 5)
+      })),
     };
 
-    // 4. الـ Response مفرود تماماً في الـ Root
     res.status(200).json(formattedProgram);
   } catch (error: any) {
     console.error("Get Program By ID Error:", error);
-    next(error); // الترحيل الذكي والآمن للـ Global Error Handler
+    next(error);
   }
 };
-
 // VALIDATED
 // --- 4.4 Update Program (Coach Only) ---
 export const updateProgram = async (
@@ -456,156 +450,6 @@ export const deleteProgram = async (
   }
 };
 
-//Validated
-// --- 4.6 Enroll in Program (Athlete) ---
-// export const enrollInProgram = async (
-//   req: AuthRequest,
-//   res: Response,
-//   next: NextFunction
-// ): Promise<void> => {
-//   try {
-//     const userId = String(req.user?.sub);
-//     const { program_id, preferred_days, preferred_time, baseline_test_values } = req.body;
-
-//     // 1. صياغة الوقت بشكل سليم أو تركه null لو مش موجود (إختياري في الشيت)
-//     let formattedTime: Date | null = null;
-//     if (preferred_time) {
-//       formattedTime = new Date(`1970-01-01T${preferred_time}:00.000Z`);
-//     }
-
-//     // 2. التحقق من وجود البرنامج وأنه Published
-//     const program = await prisma.programs.findUnique({
-//       where: { id: program_id, is_published: true },
-//       select: { id: true, title: true, sport_id: true },
-//     });
-
-//     if (!program) {
-//       res.status(404).json({
-//         success: false,
-//         error: "Program not found or not published."
-//       });
-//       return;
-//     }
-
-//     // 3. فحص الـ Conflict (التسجيل المزدوج لمنع الـ Athlete من التسجيل مرتين)
-//     const existingEnrollment = await prisma.enrollments.findFirst({
-//       where: { user_id: userId, program_id: program_id, status: "active" },
-//     });
-
-//     if (existingEnrollment) {
-//       res.status(409).json({
-//         success: false,
-//         error: "Conflict — already actively enrolled." // مطابقة للشيت بالملي
-//       });
-//       return;
-//     }
-
-//     // 4. فحص صحة الـ attribute_test_ids المبعوثة في الـ Array
-//     const testIds = baseline_test_values.map((t: any) => {
-//       if (!t.attribute_test_id || t.value === undefined) {
-//         throw new Error("VALIDATION_ERROR: Each test value must have an attribute_test_id and a value.");
-//       }
-//       return Number(t.attribute_test_id);
-//     });
-
-//     const testsInfo = await prisma.attribute_tests.findMany({
-//       where: { id: { in: testIds } },
-//       select: { id: true, unit: true },
-//     });
-
-//     if (testsInfo.length !== [...new Set(testIds)].length) {
-//       res.status(404).json({
-//         success: false,
-//         error: "One or more provided attribute_test_ids are invalid or do not exist."
-//       });
-//       return;
-//     }
-
-//     let testUnits: Record<number, string> = {};
-//     testsInfo.forEach((t) => {
-//       testUnits[t.id] = t.unit;
-//     });
-
-//     // 5. 🎯 الـ Transaction المقفلة بذكاء لتفادي مشاكل الـ Scope والـ TypeScript الـ الـ Compiler
-//     const transactionResult = await prisma.$transaction(async (tx) => {
-//       // أ) إنشاء الـ Baseline Snapshot
-//       const baselineSnapshot = await tx.physical_snapshots.create({
-//         data: {
-//           user_id: userId,
-//           sport_id: program.sport_id,
-//           snapshot_type: "program_baseline",
-//           snapshot_test_values: {
-//             create: baseline_test_values.map((test: any) => ({
-//               attribute_test_id: Number(test.attribute_test_id),
-//               value: Number(test.value),
-//               unit: testUnits[Number(test.attribute_test_id)] || "units",
-//             })),
-//           },
-//         },
-//       });
-
-//       // ب) إنشاء الـ Enrollment وربطه بالـ Snapshot
-//       const enrollment = await tx.enrollments.create({
-//         data: {
-//           users: { connect: { id: userId } },
-//           programs: { connect: { id: program_id } },
-//           status: "active",
-//           start_date: new Date(),
-//           preferred_days: Array.isArray(preferred_days) ? preferred_days : [],
-//           preferred_time: formattedTime,
-//           physical_snapshots_enrollments_baseline_snapshot_idTophysical_snapshots: {
-//             connect: { id: baselineSnapshot.id },
-//           },
-//         },
-//       });
-
-//       // جـ) تحديث الـ Snapshot بالإشارة العكسية للـ Enrollment ID
-//       await tx.physical_snapshots.update({
-//         where: { id: baselineSnapshot.id },
-//         data: { program_enrollment_id: enrollment.id },
-//       });
-
-//       // د) توليد الـ System post تلقائياً على الفيد
-//       const user = await tx.users.findUnique({
-//         where: { id: userId },
-//         select: { username: true },
-//       });
-
-//       await tx.posts.create({
-//         data: {
-//           user_id: userId,
-//           program_id: program_id,
-//           content: `${user?.username || "A user"} just started the "${program.title}" training program! Time to put in the work! 🥊🔥`,
-//           is_system_generated: true,
-//         },
-//       });
-
-//       // 🎯 بنرجع الـ الاثنين سوا في Object كـ Return للـ Transaction عشان الـ Scope الخارجي يشوفهم بأمان
-//       return { enrollment, baselineSnapshotId: baselineSnapshot.id };
-//     });
-
-//     // 6. 🎯 إرجاع الـ Response مفرود ونظيف ومطابق للـ Assertions في الـ Excel
-//     res.status(201).json({
-//       id: transactionResult.enrollment.id,
-//       status: transactionResult.enrollment.status,
-//       start_date: transactionResult.enrollment.start_date,
-//       baseline_snapshot_id: transactionResult.baselineSnapshotId // 👈 مقروءة بـ Type-safety كاملة
-//     });
-
-//   } catch (error: any) {
-//     // إمساك أخطاء الفاليديشن اليدوية بداخل الـ Transaction
-//     if (error.message?.startsWith("VALIDATION_ERROR:")) {
-//       res.status(400).json({
-//         success: false,
-//         error: error.message.replace("VALIDATION_ERROR: ", ""),
-//       });
-//       return;
-//     }
-
-//     console.error("Enrollment Error:", error);
-//     next(error); // الـ الـ الترحيل السليم للـ Global Error Handler
-//   }
-// };
 export const enrollInProgram = async (
   req: AuthRequest,
   res: Response,
@@ -762,7 +606,7 @@ export const enrollInProgram = async (
     next(error);
   }
 };
-//validated
+
 // --- 4.7 Complete Enrollment (Athlete) ---
 export const completeEnrollment = async (
   req: AuthRequest,
@@ -798,7 +642,7 @@ export const completeEnrollment = async (
       return next(new AppError("Conflict — enrollment is not active.", 409));
     }
 
-    // 3. التحقق من الـ attribute_test_ids وصحتها
+    // 3. التحقق من الـ attribute_test_ids وصحتها وجلب الأسماء والوحدات
     const testIds: number[] = [];
     for (const t of posttest_test_values) {
       if (
@@ -811,18 +655,20 @@ export const completeEnrollment = async (
       testIds.push(Number(t.attribute_test_id));
     }
 
+    // 🎯 Update: Fetch test_name and higher_is_better for the frontend deltas and progress array
     const testsInfo = await prisma.attribute_tests.findMany({
       where: { id: { in: testIds } },
-      select: { id: true, unit: true },
+      select: { id: true, test_name: true, unit: true, higher_is_better: true },
     });
 
     if (testsInfo.length !== [...new Set(testIds)].length) {
       return next(new AppError("One or more provided attribute_test_ids do not exist in the system.", 404));
     }
 
-    let testUnits: Record<number, string> = {};
+    // 🎯 Update: Map full test details instead of just units
+    let testDetails: Record<number, any> = {};
     testsInfo.forEach((t) => {
-      testUnits[t.id] = t.unit;
+      testDetails[t.id] = t;
     });
 
     // 4. استخراج الـ Baseline لعمل الـ Mapping والحسابات
@@ -838,11 +684,17 @@ export const completeEnrollment = async (
       );
       if (baseTest) {
         const diff = Number(postTest.value) - Number(baseTest.value);
+        const testMeta = testDetails[Number(postTest.attribute_test_id)];
+
+        // 🎯 Update: Enriched deltas object with test_name, unit, and higher_is_better
         deltas.push({
           test_id: postTest.attribute_test_id,
+          test_name: testMeta?.test_name || "Unknown Test",
+          unit: testMeta?.unit || "units",
           baseline: Number(baseTest.value),
           posttest: Number(postTest.value),
           improvement: diff,
+          higher_is_better: testMeta?.higher_is_better ?? true,
         });
       }
     });
@@ -865,7 +717,7 @@ export const completeEnrollment = async (
             create: posttest_test_values.map((t: any) => ({
               attribute_test_id: Number(t.attribute_test_id),
               value: Number(t.value),
-              unit: testUnits[Number(t.attribute_test_id)] || "units",
+              unit: testDetails[Number(t.attribute_test_id)]?.unit || "units",
             })),
           },
         },
@@ -905,10 +757,17 @@ export const completeEnrollment = async (
       },
       deltas,
       testimonial,
+      // 🎯 Update: Included in response root with higher_is_better
+      progress_tests: testsInfo.map((test) => ({
+        attribute_test_id: test.id,
+        test_name: test.test_name,
+        unit: test.unit,
+        higher_is_better: test.higher_is_better ?? true,
+      })),
     });
   } catch (error: any) {
     console.error("Complete Enrollment Error:", error);
-    next(error); // الـ الـ الترحيل الذكي والآمن للـ Global Error Handler فورا
+    next(error);
   }
 };
 
@@ -997,7 +856,7 @@ export const rateProgram = async (
   }
 };
 
-// the missed part on the old code // Getting the athlete enrolled programs
+// Getting the athlete enrolled programs
 export const getMyEnrolledPrograms = async (
   req: AuthRequest,
   res: Response,
@@ -1006,10 +865,14 @@ export const getMyEnrolledPrograms = async (
   try {
     const userId = String(req.user?.sub);
 
-    // 1. جلب سجلات التسجيل الخاصة باللاعب مع تفاصيل البرنامج الأساسية
+    // 1. جلب سجلات التسجيل الخاصة باللاعب مع عدد الجلسات المكتملة وتفاصيل البرنامج
     const enrollments = await prisma.enrollments.findMany({
       where: { user_id: userId },
       include: {
+        // 🎯 جلب عدد الجلسات اللي اليوزر خلصها في الـ Enrollment ده
+        _count: {
+          select: { completedSessions: true },
+        },
         programs: {
           select: {
             id: true,
@@ -1020,44 +883,75 @@ export const getMyEnrolledPrograms = async (
             rating_count: true,
             sport_id: true,
             coach_id: true,
+            // 🎯 جلب البلوكات عشان نعد الجلسات اللي جواها (إجمالي جلسات البرنامج)
+            program_blocks: {
+              select: {
+                _count: {
+                  select: { program_sessions: true },
+                },
+              },
+            },
           },
         },
-        // اختياري: لو عاوز تجيب الـ snapshots المرتبطة بالتسجيل ده
-        physical_snapshots_enrollments_baseline_snapshot_idTophysical_snapshots:
-          {
-            select: { id: true, created_at: true },
-          },
+        physical_snapshots_enrollments_baseline_snapshot_idTophysical_snapshots: {
+          select: { id: true, created_at: true },
+        },
       },
       orderBy: {
         start_date: "desc", // ترتيب من الأحدث للأقدم
       },
     });
 
-    // 2. 🎯 الـ Sad Path: لو اللاعب مش مسجل في أي برنامج نهائي في السيستم
+    // 2. الـ Sad Path: لو اللاعب مش مسجل في أي برنامج نهائي في السيستم
     if (!enrollments || enrollments.length === 0) {
       return next(new AppError("No enrolled programs found for this user.", 404));
     }
 
-    // 3. 🎯 الـ Happy Path: تجهيز الداتا ومطابقتها وتصفيتها بشكل مفرود
-    const formattedPrograms = enrollments.map((enrollment) => ({
-      enrollment_id: enrollment.id,
-      status: enrollment.status,
-      start_date: enrollment.start_date,
-      completed_date: enrollment.completed_date,
-      preferred_days: enrollment.preferred_days,
-      preferred_time: enrollment.preferred_time,
-      baseline_snapshot_id: enrollment.baseline_snapshot_id,
-      posttest_snapshot_id: enrollment.posttest_snapshot_id,
-      program: enrollment.programs, // بيانات البرنامج المدمجة
-    }));
+    // 3. الـ Happy Path: تجهيز الداتا ومطابقتها وتصفيتها بشكل مفرود
+    const formattedPrograms = enrollments.map((enrollment) => {
+      // أ) حساب إجمالي جلسات البرنامج بجمع جلسات كل بلوك
+      const totalSessionsCount = enrollment.programs.program_blocks.reduce(
+        (acc, block) => acc + block._count.program_sessions,
+        0
+      );
 
-    // إرسال الـ Response مفرود في الـ Root بدون Wrapper تلبية لشروط الشيتات السابقة
+      // ب) عدد الجلسات المكتملة
+      const completedSessionsCount = enrollment._count.completedSessions;
+
+      // جـ) حساب النسبة المئوية للتقدم
+      const progressPercent = totalSessionsCount > 0
+        ? Math.round((completedSessionsCount / totalSessionsCount) * 100)
+        : 0;
+
+      // د) استبعاد program_blocks وتغيير اسم duration_weeks لـ duration حسب طلبك
+      const { program_blocks, duration_weeks, ...programData } = enrollment.programs;
+
+      return {
+        id: enrollment.id, // تم تغييرها من enrollment_id لـ id
+        status: enrollment.status,
+        completed_sessions_count: completedSessionsCount,
+        total_sessions_count: totalSessionsCount,
+        progress_percent: progressPercent,
+
+        // باقي البيانات اللي كانت موجودة ومفيدة للفرونت إند
+        start_date: enrollment.start_date,
+        completed_date: enrollment.completed_date,
+        preferred_days: enrollment.preferred_days,
+        preferred_time: enrollment.preferred_time,
+        baseline_snapshot_id: enrollment.baseline_snapshot_id,
+        posttest_snapshot_id: enrollment.posttest_snapshot_id,
+
+        program: {
+          ...programData,
+          duration: duration_weeks, // تم تغيير الاسم
+        },
+      };
+    });
+
+    // إرسال الـ Response
     res.status(200).json(formattedPrograms);
   } catch (error: any) {
     console.error("Get Enrolled Programs Error:", error);
-    next(error); // الترحيل الفوري للـ Global Error Handler الآمن
+    next(error);
   }
 };
-
-//we have in explore the top popular programs
-// i think it handled by the front end by doing a for loop on the rating and list the largest on the Rate

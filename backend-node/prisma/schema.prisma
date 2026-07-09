@@ -422,6 +422,7 @@ enum program_goal {
   endurance
   power
   general
+  speed
 }
 
 enum snapshot_type {

@@ -708,6 +708,16 @@ export const getProgress = async (
         where: { user_id: userId, is_primary: true },
       }),
     ]);
+    console.log("Progress Debug:", {
+      userId,
+      attributeTestId,
+      hasTestInfo: !!testInfo,
+      hasUser: !!user,
+      hasProfile: !!profile,
+      testInfo,
+      profile,
+    });
+
 
     if (!testInfo || !profile || !user) {
       return next(new AppError("Data not found.", 404));
@@ -785,6 +795,7 @@ export const getMyEnrollments = async (
       include: {
         programs: {
           select: {
+            id: true,
             title: true,
             goal_primary: true,
             duration_weeks: true,
@@ -792,22 +803,55 @@ export const getMyEnrollments = async (
             users: { select: { username: true } },
           },
         },
+        // 🎯 جلب الـ Baseline Snapshot مع الـ Test Values والأسماء عشان الـ Final Assessment
+        physical_snapshots_enrollments_baseline_snapshot_idTophysical_snapshots: {
+          include: {
+            snapshot_test_values: {
+              include: {
+                attribute_tests: {
+                  select: {
+                    test_name: true,
+                    unit: true,
+                    higher_is_better: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
-    const formatted = enrollments.map((e) => ({
-      id: e.id,
-      status: e.status,
-      start_date: e.start_date,
-      completed_date: e.completed_date,
-      program: {
-        title: e.programs.title,
-        goal: e.programs.goal_primary,
-        duration: e.programs.duration_weeks,
-        cover: e.programs.cover_image,
-        coach: e.programs.users.username,
-      },
-    }));
+    const formatted = enrollments.map((e) => {
+      // استخراج الـ Baseline Tests لكل Enrollment
+      const baselineSnapshot =
+        e.physical_snapshots_enrollments_baseline_snapshot_idTophysical_snapshots;
+      const baseline_tests = baselineSnapshot?.snapshot_test_values?.map(
+        (tv) => ({
+          attribute_test_id: tv.attribute_test_id,
+          test_name: tv.attribute_tests?.test_name || "Unknown Test",
+          value: Number(tv.value),
+          unit: tv.attribute_tests?.unit || tv.unit,
+          higher_is_better: tv.attribute_tests?.higher_is_better ?? true,
+        }),
+      ) || [];
+
+      return {
+        id: e.id,
+        status: e.status,
+        start_date: e.start_date,
+        completed_date: e.completed_date,
+        baseline_tests, // 🎯 الـ Tests المطلوبة للـ Final Assessment
+        program: {
+          id: e.programs.id,
+          title: e.programs.title,
+          goal: e.programs.goal_primary,
+          duration: e.programs.duration_weeks,
+          cover: e.programs.cover_image,
+          coach: e.programs.users.username,
+        },
+      };
+    });
 
     res.status(200).json({ success: true, data: formatted });
   } catch (error: any) {

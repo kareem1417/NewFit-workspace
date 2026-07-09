@@ -295,6 +295,9 @@ export const getPublicProfile = async (
     const followingCount = await prisma.follows.count({
       where: { follower_id: targetUserId },
     });
+    const postsCount = await prisma.posts.count({
+      where: { user_id: targetUserId },
+    });
 
     let is_following = false;
     if (requestingUserId && requestingUserId !== targetUserId) {
@@ -325,6 +328,7 @@ export const getPublicProfile = async (
         user_sport_profiles: cleanedSportProfiles,
         followers_count: followersCount,
         following_count: followingCount,
+        posts_count: postsCount,
         programs_completed: 0,
         is_following,
       },

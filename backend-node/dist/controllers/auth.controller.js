@@ -7,6 +7,7 @@ exports.logout = exports.refresh = exports.login = exports.register = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = require("../config/prisma");
+const AppError_1 = require("../utils/AppError");
 const DUMMY_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrqO6Z5z1jFvJk9fJk9fJk9fJk9fJk9';
 const generateTokens = (user) => {
     const payload = { sub: user.id, username: user.username, role: user.role };
@@ -14,69 +15,19 @@ const generateTokens = (user) => {
     const refreshToken = jsonwebtoken_1.default.sign({ sub: user.id }, process.env.JWT_REFRESH_SECRET || 'fallback_refresh_secret', { expiresIn: '7d' });
     return { accessToken, refreshToken };
 };
-const register = async (req, res) => {
+const register = async (req, res, next) => {
     try {
         const { username, email, password, date_of_birth, role = 'athlete' } = req.body;
-        if (!username || !email || !password || !date_of_birth) {
-            res.status(409).json({
-                success: false,
-                error: "Missing required fields"
-            });
-            return;
-        }
         const existingEmail = await prisma_1.prisma.users.findUnique({ where: { email } });
         if (existingEmail) {
-            res.status(409).json({ success: false, error: 'Unable to create account with the provided information.' });
-            return;
-        }
-        const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
-        if (!passwordRegex.test(password)) {
-            res.status(400).json({
-                success: false,
-                error: "Weak password. Must be at least 8 characters long, containing 1 uppercase letter, 1 lowercase letter, and 1 number."
-            });
-            return;
-        }
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            res.status(400).json({
-                success: false,
-                error: "Invalid email format. Please provide a valid email address."
-            });
-            return;
+            return next(new AppError_1.AppError("Unable to create account with the provided information.", 409));
         }
         const existingUsername = await prisma_1.prisma.users.findUnique({ where: { username } });
         if (existingUsername) {
-            res.status(409).json({ success: false, error: 'Username already exists' });
-            return;
-        }
-        if (!date_of_birth) {
-            res.status(400).json({ success: false, error: "Validation error — DOB required." });
-            return;
-        }
-        // Ensure DOB is valid and not in the future
-        const dob = new Date(date_of_birth);
-        const today = new Date();
-        // 1. Verify date is valid format
-        if (isNaN(dob.getTime())) {
-            res.status(400).json({ success: false, error: "Invalid date format. Use YYYY-MM-DD." });
-            return;
-        }
-        // 2. Verify date is not in the future
-        if (dob > today) {
-            res.status(400).json({ success: false, error: "Date of birth cannot be in the future." });
-            return;
-        }
-        if (!['athlete', 'coach'].includes(role)) {
-            res.status(400).json({
-                success: false,
-                error: "Validation error — role must be athlete or coach."
-            });
-            return;
+            return next(new AppError_1.AppError("Username already exists", 409));
         }
         const salt = await bcryptjs_1.default.genSalt(10);
         const password_hash = await bcryptjs_1.default.hash(password, salt);
-        // Use Transaction to save user and token together
         const result = await prisma_1.prisma.$transaction(async (tx) => {
             const newUser = await tx.users.create({
                 data: {
@@ -96,40 +47,24 @@ const register = async (req, res) => {
             });
             return { user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role }, tokens: { accessToken, refreshToken } };
         });
-        // Standardize frontend response
         res.status(201).json({ success: true, message: 'User registered successfully', data: result });
     }
     catch (error) {
         console.error('Registration Error:', error);
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        return next(new AppError_1.AppError("Internal server error", 500));
     }
 };
 exports.register = register;
-const login = async (req, res) => {
+const login = async (req, res, next) => {
     try {
         const { email, password } = req.body;
-        if (!email || email.trim() === '') {
-            res.status(400).json({ success: false, error: "Validation error — Email required." });
-            return;
-        }
-        if (!password || password.trim() === '') {
-            res.status(400).json({ success: false, error: "Validation error — Password required." });
-            return;
-        }
         const user = await prisma_1.prisma.users.findFirst({ where: { email, is_active: true } });
-        // 1. Define Dummy Hash for non-existent user
-        const DUMMY_HASH = '$2a$10$dummyHashDummyHashDummyHashDummyHashDummyHash';
-        // 2. Determine password to compare (Timing Attack Resistance)
         const passwordHashToCompare = user ? user.password_hash : DUMMY_HASH;
         const isMatch = await bcryptjs_1.default.compare(password, passwordHashToCompare);
-        // 3. Generic error message if user missing or password invalid
         if (!user || !isMatch) {
-            res.status(401).json({ success: false, error: 'Invalid credentials' });
-            return;
+            return next(new AppError_1.AppError("Invalid credentials", 401));
         }
         const { accessToken, refreshToken } = generateTokens(user);
-        // 4. Transaction to clear old tokens and create new one
-        // (Note: deleteMany clears previous tokens, logging out other devices)
         await prisma_1.prisma.$transaction([
             prisma_1.prisma.user_tokens.deleteMany({ where: { user_id: user.id, token_type: 'REFRESH' } }),
             prisma_1.prisma.user_tokens.create({
@@ -146,7 +81,7 @@ const login = async (req, res) => {
     }
     catch (error) {
         console.error('Login Error:', error);
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        return next(new AppError_1.AppError("Internal server error", 500));
     }
 };
 exports.login = login;

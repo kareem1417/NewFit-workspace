@@ -2,170 +2,262 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getWorkoutHistory = exports.logWorkout = exports.getNextWorkout = void 0;
 const prisma_1 = require("../config/prisma");
-// --- 1. Get Next Workout ---
-const getNextWorkout = async (req, res) => {
+const AppError_1 = require("../utils/AppError");
+// Get Next Workout
+const getNextWorkout = async (req, res, next) => {
     try {
-        const userId = String(req.user?.sub);
-        // 1. Fetch active enrollment for the player
-        const activeEnrollment = await prisma_1.prisma.enrollments.findFirst({
-            where: { user_id: userId, status: 'active' },
-            include: {
-                programs: {
-                    include: {
-                        program_blocks: {
-                            orderBy: { order_index: 'asc' },
-                            include: {
-                                program_sessions: {
-                                    orderBy: { day_offset: 'asc' },
-                                    include: {
-                                        session_exercises: { orderBy: { order_index: 'asc' } }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        if (!activeEnrollment) {
-            res.status(404).json({ success: false, error: "No active enrollment found." });
-            return;
+        // 🚨 Sad Path: التشييك على التوكن والـ Payload
+        const userId = req.user?.sub ? String(req.user.sub) : null;
+        if (!userId) {
+            return next(new AppError_1.AppError("Unauthorized.", 401));
         }
-        // 2. Fetch completed workouts in this enrollment
+        const queryEnrollmentId = req.query.enrollment_id;
+        let activeEnrollment = null;
+        // 1. التعامل مع الـ Enrollment لو مبعوت أو جلب الأحدث ديناميكياً
+        if (queryEnrollmentId) {
+            const enrollment = await prisma_1.prisma.enrollments.findUnique({
+                where: { id: queryEnrollmentId },
+                select: {
+                    id: true,
+                    user_id: true,
+                    status: true,
+                    program_id: true,
+                    start_date: true,
+                },
+            });
+            if (!enrollment) {
+                return next(new AppError_1.AppError("Enrollment not found.", 404));
+            }
+            if (enrollment.user_id !== userId) {
+                return next(new AppError_1.AppError("Forbidden.", 403));
+            }
+            if (enrollment.status !== "active") {
+                return next(new AppError_1.AppError("No active enrollment found.", 404));
+            }
+            activeEnrollment = enrollment;
+        }
+        else {
+            activeEnrollment = await prisma_1.prisma.enrollments.findFirst({
+                where: { user_id: userId, status: "active" },
+                orderBy: { created_at: "desc" },
+                select: { id: true, program_id: true, start_date: true },
+            });
+        }
+        if (!activeEnrollment) {
+            return next(new AppError_1.AppError("No active enrollment found.", 404));
+        }
+        // 2. جلب الـ Sessions المتبقية والـ Exercises المرتبطة بها
         const completedSessions = await prisma_1.prisma.completed_sessions.findMany({
             where: { enrollment_id: activeEnrollment.id },
-            select: { program_session_id: true }
+            select: { program_session_id: true },
         });
-        const completedSessionIds = completedSessions.map(cs => cs.program_session_id);
-        // 3. Find the first incomplete workout session
-        let nextSession = null;
-        for (const block of activeEnrollment.programs.program_blocks) {
-            for (const session of block.program_sessions) {
-                if (!completedSessionIds.includes(session.id)) {
-                    nextSession = session;
-                    break;
-                }
-            }
-            if (nextSession)
-                break;
-        }
+        const completedSessionIds = completedSessions.map((cs) => cs.program_session_id);
+        const nextSession = await prisma_1.prisma.program_sessions.findFirst({
+            where: {
+                id: { notIn: completedSessionIds },
+                program_blocks: {
+                    program_id: activeEnrollment.program_id,
+                },
+            },
+            orderBy: [
+                { program_blocks: { order_index: "asc" } },
+                { day_offset: "asc" },
+            ],
+            include: {
+                session_exercises: {
+                    orderBy: { order_index: "asc" },
+                    select: {
+                        id: true,
+                        exercise_name: true, // 👈 الحقل الصحيح من الـ Schema بعد الفيكس
+                        order_index: true,
+                        sets: true,
+                        reps: true,
+                        rest_seconds: true,
+                    },
+                },
+            },
+        });
+        // 🎯 الـ Happy Path: في حالة إتمام البرنامج بالكامل
         if (!nextSession) {
-            res.status(200).json({ success: true, message: "You have completed all workouts in this program!" });
+            res.status(200).json({
+                next_workout: null,
+                message: "All sessions completed. Ready to finish the program.", // مطابقة للشيت
+            });
             return;
         }
+        // حساب تاريخ التمرين بناءً على الـ start_date والـ day_offset
+        const scheduledDate = new Date(activeEnrollment.start_date);
+        scheduledDate.setDate(scheduledDate.getDate() + nextSession.day_offset);
+        // 🔄 تحويل الـ exercise_name إلى name بالملي لإرضاء الـ Automated Test
+        const formattedExercises = nextSession.session_exercises.map((ex) => ({
+            id: ex.id,
+            name: ex.exercise_name, // 👈 الـ Alias المطلوب للشيت
+            order_index: ex.order_index,
+            sets: ex.sets,
+            reps: ex.reps,
+            rest_seconds: ex.rest_seconds,
+        }));
+        // 🎯 الـ Happy Path الأساسي: الداتا مفرودة بالكامل ومباشرة بدون wrappers
         res.status(200).json({
-            success: true,
-            enrollment_id: activeEnrollment.id,
-            workout: nextSession
+            session_id: nextSession.id,
+            session_name: nextSession.name,
+            day_offset: nextSession.day_offset,
+            estimated_duration_minutes: nextSession.estimated_duration_minutes,
+            scheduled_date: scheduledDate.toISOString().split("T")[0],
+            exercises: formattedExercises,
         });
     }
     catch (error) {
         console.error("Get Next Workout Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch workout." });
+        next(error); // 👈 ترحيل أي خطأ طارئ للـ Global Error Handler ليتعامل مع الـ 500 بنظافة
     }
 };
 exports.getNextWorkout = getNextWorkout;
-// --- 2. Log Workout ---
-const logWorkout = async (req, res) => {
+//Log Workout
+const logWorkout = async (req, res, next) => {
     try {
-        const userId = String(req.user?.sub);
-        const { enrollment_id, program_session_id, rpe, duration_minutes, notes, exercises } = req.body;
-        if (!enrollment_id || !program_session_id || !exercises) {
-            res.status(400).json({ success: false, error: "Missing required workout data." });
-            return;
+        const userId = req.user?.sub ? String(req.user.sub) : null;
+        if (!userId) {
+            return next(new AppError_1.AppError("Unauthorized.", 401));
         }
-        // Use Transaction to prevent partial saves on error
+        const { enrollment_id, session_id, rpe, duration_minutes, notes, exercises, completed_at, } = req.body;
+        // 1. جلب الـ Enrollment والتحقق من وجوده وصاحبه
+        const enrollment = await prisma_1.prisma.enrollments.findUnique({
+            where: { id: enrollment_id },
+            select: { user_id: true, status: true, program_id: true },
+        });
+        if (!enrollment) {
+            return next(new AppError_1.AppError("Enrollment not found.", 404));
+        }
+        // تأمين الـ Resource: التأكد من أن الـ Athlete هو صاحب الـ Enrollment
+        if (enrollment.user_id !== userId) {
+            return next(new AppError_1.AppError("Forbidden.", 403));
+        }
+        // 🚨 سطر 40 في الشيت: لو الـ enrollment مش active يرجع 409 Conflict
+        if (enrollment.status !== "active") {
+            return next(new AppError_1.AppError("Cannot log to completed enrollment.", 409));
+        }
+        // 2. سطر 39 في الشيت: التأكد إن الـ Session دي تبع الـ Program المسجل فيه اللاعب فعلياً
+        const sessionInProgram = await prisma_1.prisma.program_sessions.findFirst({
+            where: {
+                id: session_id,
+                program_blocks: {
+                    program_id: enrollment.program_id,
+                },
+            },
+        });
+        if (!sessionInProgram) {
+            return next(new AppError_1.AppError("Forbidden — session does not belong to this enrollment's program.", 403));
+        }
+        // 3. تنفيذ الـ Transaction لتسجيل الـ Log وحفظ الداتا متكاملة في خطوة واحدة
         const result = await prisma_1.prisma.$transaction(async (tx) => {
-            // 1. Log the workout session
             const completedSession = await tx.completed_sessions.create({
                 data: {
                     user_id: userId,
                     enrollment_id: enrollment_id,
-                    program_session_id: program_session_id,
-                    rpe: Number(rpe) || null,
-                    duration_minutes: Number(duration_minutes) || null,
-                    notes: notes || null
-                }
+                    program_session_id: session_id,
+                    rpe: rpe ? Number(rpe) : null,
+                    duration_minutes: duration_minutes ? Number(duration_minutes) : null,
+                    notes: notes || null, // الحماية هنا: هتنزل null في الـ DB لو مش مبعوتة من الـ body
+                    created_at: completed_at ? new Date(completed_at) : new Date(),
+                },
             });
-            // 2. Log actual exercises and weights inside this session
-            const exercisesData = exercises.map((ex) => ({
-                completed_session_id: completedSession.id,
-                session_exercise_id: ex.session_exercise_id,
-                sets_data: ex.sets_data, // Actual array: [{set: 1, reps: 8, weight: 50}]
-                notes: ex.notes || null
-            }));
-            await tx.completed_exercises.createMany({
-                data: exercisesData
-            });
+            // لو مبعوت داتا للـ Exercises الفرعية، سيفها معاها في نفس اللحظة
+            if (exercises && Array.isArray(exercises)) {
+                const exercisesData = exercises.map((ex) => ({
+                    completed_session_id: completedSession.id,
+                    session_exercise_id: ex.session_exercise_id,
+                    sets_data: ex.sets_data || [],
+                    notes: ex.notes || null,
+                }));
+                await tx.completed_exercises.createMany({
+                    data: exercisesData,
+                });
+            }
             return completedSession;
         });
+        // 🎯 الـ Happy Paths (سطر 33 و 34): إرجاع الـ JSON بالـ Structure المطلوب تماماً
         res.status(201).json({
-            success: true,
-            message: "Workout logged successfully! Great job! 💪",
-            data: result
+            id: result.id,
+            session_info: {
+                session_id: result.program_session_id,
+                notes: result.notes, // هترجع null تلقائياً لو مكنش ليها قيمة
+            },
+            timestamp: result.created_at.toISOString(),
         });
     }
     catch (error) {
         console.error("Log Workout Error:", error);
-        res.status(500).json({ success: false, error: "Failed to log workout." });
+        next(error); // ترحيل آمن للـ Global Error Handler عشان يرجع الـ 500 النظيفة
     }
 };
 exports.logWorkout = logWorkout;
-// --- 3. Get Workout History ---
-const getWorkoutHistory = async (req, res) => {
+// Get Workout History
+const getWorkoutHistory = async (req, res, next) => {
     try {
-        const userId = String(req.user?.sub);
+        // 1. Sad Path: No token
+        const userId = req.user?.sub ? String(req.user.sub) : null;
+        if (!userId) {
+            return next(new AppError_1.AppError("Unauthorized.", 401));
+        }
         const limit = parseInt(req.query.limit) || 20;
         const offset = parseInt(req.query.offset) || 0;
-        // 1. Fetch all completed sessions ordered from newest to oldest
+        const queryEnrollmentId = req.query.enrollment_id;
+        const whereCondition = { user_id: userId };
+        if (queryEnrollmentId) {
+            const enrollment = await prisma_1.prisma.enrollments.findUnique({
+                where: { id: queryEnrollmentId },
+                select: { user_id: true },
+            });
+            if (!enrollment) {
+                return next(new AppError_1.AppError("Enrollment not found.", 404));
+            }
+            if (enrollment.user_id !== userId) {
+                return next(new AppError_1.AppError("Forbidden.", 403));
+            }
+            whereCondition.enrollment_id = queryEnrollmentId;
+        }
         const history = await prisma_1.prisma.completed_sessions.findMany({
-            where: { user_id: userId },
-            orderBy: { created_at: 'desc' },
+            where: whereCondition,
+            orderBy: { created_at: "desc" },
             take: limit,
             skip: offset,
             include: {
-                // Include session name (e.g., Heavy Strength Day)
                 program_sessions: {
-                    select: { name: true }
+                    select: { name: true },
                 },
-                // Include program title this session belongs to
                 enrollments: {
                     include: {
-                        programs: { select: { title: true } }
-                    }
+                        programs: { select: { title: true } },
+                    },
                 },
-                // Include played exercises and weights
                 completed_exercises: {
                     include: {
-                        session_exercises: { select: { exercise_name: true } }
-                    }
-                }
-            }
+                        session_exercises: { select: { exercise_name: true } },
+                    },
+                },
+            },
         });
-        // 2. Format data for frontend display
-        const formattedHistory = history.map(session => ({
+        const formattedHistory = history.map((session) => ({
             id: session.id,
             date: session.created_at,
-            program_title: session.enrollments?.programs?.title || 'Unknown Program',
-            session_name: session.program_sessions?.name || 'Unknown Session',
+            program_title: session.enrollments?.programs?.title || "Unknown Program",
+            session_name: session.program_sessions?.name || "Unknown Session",
             rpe: session.rpe,
             duration_minutes: session.duration_minutes,
             session_notes: session.notes,
-            exercises: session.completed_exercises.map(ex => ({
+            exercises: session.completed_exercises.map((ex) => ({
                 id: ex.id,
-                exercise_name: ex.session_exercises?.exercise_name || 'Unknown Exercise',
+                exercise_name: ex.session_exercises?.exercise_name || "Unknown Exercise",
                 sets_data: ex.sets_data,
-                exercise_notes: ex.notes
-            }))
+                exercise_notes: ex.notes,
+            })),
         }));
-        res.status(200).json({
-            success: true,
-            data: formattedHistory
-        });
+        res.status(200).json(formattedHistory);
     }
     catch (error) {
         console.error("Get Workout History Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch workout history." });
+        next(new AppError_1.AppError("Internal server error occurred.", 500));
     }
 };
 exports.getWorkoutHistory = getWorkoutHistory;

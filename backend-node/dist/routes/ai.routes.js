@@ -3,17 +3,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const ai_controller_1 = require("../controllers/ai.controller");
 const auth_middleware_1 = require("../middlewares/auth.middleware");
+const validation_middleware_1 = require("../middlewares/validation.middleware");
+const ai_validator_1 = require("../validators/ai.validator");
 const router = (0, express_1.Router)();
 // ==========================================
 // --- AI & Machine Learning Routes ---
 // ==========================================
-// Protected routes, user must be logged in
-router.post('/ask', auth_middleware_1.authenticateToken, ai_controller_1.askQuestion);
-router.post('/recommend', auth_middleware_1.authenticateToken, ai_controller_1.recommendProgram);
-router.post('/coach', auth_middleware_1.authenticateToken, ai_controller_1.getCoachAdvice);
+router.post('/ask', auth_middleware_1.authenticateToken, ai_validator_1.askQuestionValidation, validation_middleware_1.validate, ai_controller_1.askQuestion);
+router.post('/recommend', auth_middleware_1.authenticateToken, ai_validator_1.recommendValidation, validation_middleware_1.validate, ai_controller_1.recommendProgram);
+router.post('/coach', auth_middleware_1.authenticateToken, ai_validator_1.coachAdviceValidation, validation_middleware_1.validate, ai_controller_1.getCoachAdvice);
 // ==========================================
 // --- Chat Sessions Management Routes ---
 // ==========================================
 router.get('/sessions', auth_middleware_1.authenticateToken, ai_controller_1.getSessions);
-router.get('/sessions/:id/messages', auth_middleware_1.authenticateToken, ai_controller_1.getSessionMessages);
+router.get('/sessions/:id/messages', auth_middleware_1.authenticateToken, ai_validator_1.sessionParamValidation, validation_middleware_1.validate, ai_controller_1.getSessionMessages);
 exports.default = router;
