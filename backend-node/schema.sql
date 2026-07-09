@@ -86,6 +86,7 @@ INSERT INTO sport_attributes (sport_id, name, display_order, description) VALUES
     (1, 'Anaerobic Capacity', 5, 'High-intensity work capacity and lactate tolerance');
 
 -- Attribute tests: maps specific tests to radar axes with weighting
+-- naf3 a3ml eli fe dma8i en el strenght yb2a leha kza tmreana b2es beha
 CREATE TABLE attribute_tests (
     id                  SERIAL PRIMARY KEY,
     sport_attribute_id  INTEGER NOT NULL REFERENCES sport_attributes(id) ON DELETE CASCADE,
@@ -176,6 +177,8 @@ CREATE TRIGGER update_user_tokens_updated_at BEFORE UPDATE ON user_tokens
 
 -- User sport profiles: links athlete to sport with cohort data
 -- age_group_id is NOT stored here — derived dynamically from users.date_of_birth
+-- Level & weight_class are stored here only
+-- Supposed to be with user_sport_profiles.id if every athlete has different score in different sports
 CREATE TABLE user_sport_profiles (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -211,7 +214,7 @@ WHERE u.date_of_birth IS NOT NULL;
 CREATE TABLE physical_snapshots (
     id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    sport_id              INTEGER NOT NULL REFERENCES sports(id),
+    sport_id              INTEGER NOT NULL REFERENCES sports(id),  --use user_sport_profile_id in future
     snapshot_type         snapshot_type NOT NULL,
     program_enrollment_id UUID, -- It's nullable so not every enrollment is associated to a program
     notes                 TEXT,
@@ -226,6 +229,7 @@ CREATE TABLE snapshot_test_values (
     attribute_test_id INTEGER NOT NULL REFERENCES attribute_tests(id),
     value             DECIMAL(10,2) NOT NULL,
     unit              VARCHAR(20) NOT NULL,  -- denormalized from attribute_tests
+    -- add created at
     UNIQUE(snapshot_id, attribute_test_id)
 );
 

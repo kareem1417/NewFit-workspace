@@ -3,7 +3,6 @@ import {
     createSportProfile,
     updateSportProfile,
     createSnapshot,
-    getSnapshots,
     getRadarData,
     getProgress,
     getMyEnrollments
@@ -22,7 +21,6 @@ router.patch('/sport-profile', authenticateToken, updateSportProfile);
 // 2. Physical Snapshots
 // ==========================================
 router.post('/snapshots', authenticateToken, createSnapshot);
-router.get('/snapshots', authenticateToken, getSnapshots);
 
 // ==========================================
 // 3. Analytics & Progress Tracking

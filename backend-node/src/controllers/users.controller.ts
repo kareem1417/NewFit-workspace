@@ -151,6 +151,7 @@ export const uploadPhoto = async (req: AuthRequest, res: Response): Promise<void
 export const getPublicProfile = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const targetUserId = req.params.id; // Target profile ID to view
+        // 34an arg3ha ll user da
         const requestingUserId = req.user?.sub as string; // ID of the requesting user
 
         // 1. Fetch profile data

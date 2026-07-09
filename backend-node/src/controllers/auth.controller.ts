@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../config/prisma';
@@ -13,80 +13,41 @@ const generateTokens = (user: { id: string; username: string; role: string }) =>
     return { accessToken, refreshToken };
 };
 
-export const register = async (req: Request, res: Response): Promise<void> => {
+export const register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { username, email, password, date_of_birth, role = 'athlete' } = req.body;
-        if (!username || !email || !password || !date_of_birth) {
-            res.status(409).json({
-                success: false,
-                error: "Missing required fields"
-            });
-            return;
-        }
+        // At this point, validation has passed – all fields are valid and present
+        const { username, email, password, date_of_birth, sex, role = 'athlete' } = req.body;
+
+        // --- Business‑logic checks (uniqueness) ---
         const existingEmail = await prisma.users.findUnique({ where: { email } });
         if (existingEmail) {
-            res.status(409).json({ success: false, error: 'Unable to create account with the provided information.' });
-            return;
-        }
-        const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
-        if (!passwordRegex.test(password)) {
-            res.status(400).json({
-                success: false,
-                error: "Weak password. Must be at least 8 characters long, containing 1 uppercase letter, 1 lowercase letter, and 1 number."
-            });
-            return;
-        }
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            res.status(400).json({
-                success: false,
-                error: "Invalid email format. Please provide a valid email address."
-            });
-            return;
+            const error: any = new Error('Unable to create account with the provided information.');
+            error.statusCode = 409;
+            error.isOperational = true;
+            throw error;
         }
 
         const existingUsername = await prisma.users.findUnique({ where: { username } });
         if (existingUsername) {
-            res.status(409).json({ success: false, error: 'Username already exists' });
-            return;
-        }
-        if (!date_of_birth) {
-            res.status(400).json({ success: false, error: "Validation error — DOB required." });
-            return;
+            const error: any = new Error('Username already exists');
+            error.statusCode = 409;
+            error.isOperational = true;
+            throw error;
         }
 
-        // Ensure DOB is valid and not in the future
-        const dob = new Date(date_of_birth);
-        const today = new Date();
-
-        // 1. Verify date is valid format
-        if (isNaN(dob.getTime())) {
-            res.status(400).json({ success: false, error: "Invalid date format. Use YYYY-MM-DD." });
-            return;
-        }
-
-        // 2. Verify date is not in the future
-        if (dob > today) {
-            res.status(400).json({ success: false, error: "Date of birth cannot be in the future." });
-            return;
-        }
-        if (!['athlete', 'coach'].includes(role)) {
-            res.status(400).json({
-                success: false,
-                error: "Validation error — role must be athlete or coach."
-            });
-            return;
-        }
-
+        // --- Password hashing ---
         const salt = await bcrypt.genSalt(10);
         const password_hash = await bcrypt.hash(password, salt);
 
-        // Use Transaction to save user and token together
+        // --- Transaction ---
         const result = await prisma.$transaction(async (tx) => {
             const newUser = await tx.users.create({
                 data: {
-                    username, email, password_hash,
+                    username,
+                    email,
+                    password_hash,
                     date_of_birth: new Date(date_of_birth),
+                    sex: sex || 'male',
                     role,
                 },
             });
@@ -98,18 +59,23 @@ export const register = async (req: Request, res: Response): Promise<void> => {
                     user_id: newUser.id,
                     token: refreshToken,
                     token_type: 'REFRESH',
-                    expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-                }
+                    expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                },
             });
 
-            return { user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role }, tokens: { accessToken, refreshToken } };
+            return {
+                user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role },
+                tokens: { accessToken, refreshToken },
+            };
         });
 
-        // Standardize frontend response
-        res.status(201).json({ success: true, message: 'User registered successfully', data: result });
+        res.status(201).json({
+            success: true,
+            message: 'User registered successfully',
+            data: result,
+        });
     } catch (error) {
-        console.error('Registration Error:', error);
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        next(error); // Forward to global error handler
     }
 };
 

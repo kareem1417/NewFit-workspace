@@ -1,11 +1,13 @@
 import { Router, Response } from 'express';
 import { register, login, refresh, logout } from '../controllers/auth.controller';
 import { authenticateToken, AuthRequest } from '../middlewares/auth.middleware';
+import { registerValidation } from '../validators/auth.validator';
+import { validate } from '../middlewares/validation.middleware';
 
 const router = Router();
 
 // Public routes (Registration and Login)
-router.post('/register', register);
+router.post('/register', registerValidation, validate, register);
 router.post('/login', login);
 router.post('/logout', authenticateToken, logout);
 

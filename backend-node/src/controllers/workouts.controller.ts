@@ -42,27 +42,24 @@ export const getNextWorkout = async (req: AuthRequest, res: Response): Promise<v
         const completedSessionIds = completedSessions.map(cs => cs.program_session_id);
 
         // 3. Find the first incomplete workout session
-        let nextSession = null;
         for (const block of activeEnrollment.programs.program_blocks) {
             for (const session of block.program_sessions) {
                 if (!completedSessionIds.includes(session.id)) {
-                    nextSession = session;
-                    break;
+                    res.status(200).json({
+                        success: true,
+                        enrollment_id: activeEnrollment.id,
+                        workout: session
+                    });
+                    return
                 }
             }
-            if (nextSession) break;
         }
 
-        if (!nextSession) {
+        // let's use is_completed flag instead
+        /*if (!nextSession) {
             res.status(200).json({ success: true, message: "You have completed all workouts in this program!" });
             return;
-        }
-
-        res.status(200).json({
-            success: true,
-            enrollment_id: activeEnrollment.id,
-            workout: nextSession
-        });
+        }*/
 
     } catch (error: any) {
         console.error("Get Next Workout Error:", error);

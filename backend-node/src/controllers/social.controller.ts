@@ -114,6 +114,7 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
     }
 };
 
+// In his profile
 // --- 5.3 Get User Posts ---
 export const getUserPosts = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -365,6 +366,7 @@ export const unfollowUser = async (req: AuthRequest, res: Response): Promise<voi
     }
 };
 
+// Are called in the profile when the user wants to see his followers
 // --- 5.10 Get Followers ---
 export const getFollowers = async (req: AuthRequest, res: Response): Promise<void> => {
     try {

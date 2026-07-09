@@ -1,87 +1,26 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
-import { calculateZScore, calculatePercentile, calculatePunchPower } from '../services/calculation.service';
+import { calculateZScore, calculatePercentile, calculatePunchPower, getAgeGroupId, computeAttributeScore, getLatestTestValue, Cohort, computeAttributeScoreRaw } from '../services/calculation.service';
 import { snapshot_type, competitive_level, weight_class, enrollment_status } from '@prisma/client';
+import { AppError } from '../utils/AppError';
+import { addMetricsJob, addMetricsJobFromSnapshot } from '../queues/metrics.queue';
 
-// ==========================================
-// Helper Functions for CR-14 & CR-15
-// ==========================================
-
-const getAgeGroupId = (dateOfBirth: Date): number => {
-    const age = new Date().getFullYear() - dateOfBirth.getFullYear();
-    if (age < 18) return 1;      // Under 18
-    if (age <= 35) return 2;     // 18-35
-    return 3;                    // 35+
+const ATTRIBUTE_METRIC_KEY: Record<string, keyof UserMetricsScores> = {
+    'Strength': 'strength_score',
+    'Explosiveness': 'explosiveness_score',
+    'Aerobic Endurance': 'aerobic_score',
+    'Muscular Endurance': 'endurance_score',
+    'Anaerobic Capacity': 'anaerobic_score',
 };
 
-// Modification 1: Use exact weight class names from DB and define as Enum
-const getAdjacentWeightClasses = (weightClass: weight_class): weight_class[] => {
-    const classes: weight_class[] = [
-        'flyweight', 'bantamweight', 'featherweight', 'lightweight',
-        'light_welterweight', 'welterweight', 'light_middleweight', 'middleweight',
-        'super_middleweight', 'light_heavyweight', 'cruiserweight', 'heavyweight'
-    ];
-    const idx = classes.indexOf(weightClass);
-    if (idx === -1) return [];
-    const adjacent: weight_class[] = [];
-    if (idx > 0) adjacent.push(classes[idx - 1]);
-    if (idx < classes.length - 1) adjacent.push(classes[idx + 1]);
-    return adjacent;
+type UserMetricsScores = {
+    endurance_score: number | null;
+    strength_score: number | null;
+    explosiveness_score: number | null;
+    aerobic_score: number | null;
+    anaerobic_score: number | null;
 };
-
-/**
- * 5-level fallback cascade:
- */
-// Modification 2: Replace string with competitive_level and weight_class
-const getPercentileWithFallback = async (
-    testId: number,
-    rawValue: number,
-    higherIsBetter: boolean,
-    userLevel: competitive_level,
-    userWeight: weight_class,
-    userAgeGroupId: number
-): Promise<{ percentile: number; fallbackLevel: number }> => {
-
-    // Modification 3: Force TypeScript to accept this structure as DB Filters
-    const fallbackSteps: any[] = [
-        { weight: userWeight, level: userLevel, ageGroup: userAgeGroupId },
-        { weight: userWeight, level: userLevel, ageGroup: undefined },
-        { weight: { in: getAdjacentWeightClasses(userWeight) }, level: userLevel, ageGroup: undefined },
-        { weight: undefined, level: userLevel, ageGroup: undefined },
-        { weight: undefined, level: undefined, ageGroup: undefined }
-    ];
-
-    for (let step = 0; step < fallbackSteps.length; step++) {
-        const criteria = fallbackSteps[step];
-        const norm = await prisma.normative_data.findFirst({
-            where: {
-                attribute_test_id: testId,
-                ...(criteria.weight && { weight_class: criteria.weight }),
-                ...(criteria.level && { level: criteria.level }),
-                ...(criteria.ageGroup && { age_group_id: criteria.ageGroup })
-            }
-        });
-        if (norm) {
-            const z = calculateZScore(rawValue, Number(norm.mean_value), Number(norm.std_dev), higherIsBetter);
-            const percentile = calculatePercentile(z);
-            return { percentile, fallbackLevel: step };
-        }
-    }
-    const fallbackPercentile = Math.min(99, Math.max(1, Math.floor(rawValue / 2)));
-    return { percentile: fallbackPercentile, fallbackLevel: 4 };
-};
-
-const getTestName = async (testId: number): Promise<string> => {
-    const test = await prisma.attribute_tests.findUnique({
-        where: { id: testId },
-        select: { test_name: true }
-    });
-    return test?.test_name || 'Unknown';
-};
-// ==========================================
-// 3.1 & 3.2: Sport Profiles
-// ==========================================
 
 export const createSportProfile = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -143,34 +82,77 @@ export const updateSportProfile = async (req: AuthRequest, res: Response): Promi
 // 3.3 & 3.4: Snapshots
 // ==========================================
 
+
 export const createSnapshot = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const userId = req.user?.sub as string;
-        const { sport_id = 1, snapshot_type = 'manual_update', program_enrollment_id, notes, test_values } = req.body;
+        // what is a must in body and what isn't
+        const { sport_id = 1, snapshot_type = 'manual_update', notes, test_values } = req.body;
 
         if (!test_values || !Array.isArray(test_values) || test_values.length === 0) {
             res.status(400).json({ success: false, error: "test_values array is required" });
             return;
         }
-
-        if ((snapshot_type === 'program_baseline' || snapshot_type === 'program_posttest') && !program_enrollment_id) {
+        /*if ((snapshot_type === 'program_baseline' || snapshot_type === 'program_posttest') && !program_enrollment_id) {
             res.status(400).json({ success: false, error: "program_enrollment_id is required for this snapshot type." });
             return;
-        }
+        }*/
 
         const result = await prisma.$transaction(async (tx) => {
             const snapshot = await tx.physical_snapshots.create({
-                data: {
-                    user_id: userId,
-                    sport_id: Number(sport_id),
-                    snapshot_type,
-                    program_enrollment_id,
-                    notes
-                }
+                data: { user_id: userId, sport_id: Number(sport_id), snapshot_type, notes }
             });
 
             const testIds = test_values.map((t: any) => t.attribute_test_id);
             const testsInfo = await tx.attribute_tests.findMany({ where: { id: { in: testIds } } });
+            const dataToInsert = test_values.map((test: any) => {
+                const info = testsInfo.find(ti => ti.id === test.attribute_test_id);
+                return {
+                    snapshot_id: snapshot.id,
+                    attribute_test_id: test.attribute_test_id,
+                    value: test.value,
+                    unit: info?.unit || 'unknown'
+                };
+            });
+
+            await tx.snapshot_test_values.createMany({ data: dataToInsert });
+            return snapshot;
+        });
+
+        // Enqueue after transaction commits — if the transaction rolled back this never runs.
+        await addMetricsJobFromSnapshot(userId, Number(sport_id), test_values);
+
+        res.status(201).json({ success: true, message: "Snapshot saved!", snapshot_id: result.id });
+
+    } catch (error: any) {
+        console.error("Create Snapshot Error:", error);
+        res.status(500).json({ success: false, error: "Failed to save snapshot" });
+    }
+};
+
+// POST (update the snapshots values)
+/*export const updateSnapshotValues = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { snapshot_id, test_values } = req.body;
+
+        if (!snapshot_id || !test_values || !Array.isArray(test_values) || test_values.length === 0) {
+            res.status(400).json({ success: false, error: "snapshot_id and test_values array are required" });
+            return;
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            const snapshot = await tx.physical_snapshots.update({
+                where: { id: snapshot_id },
+                data: {
+                    user_id: userId,
+                    snapshot_type: 'manual_update',
+                }
+            });
+
+            const testIds = test_values.map((t: any) => t.attribute_test_id);
+            const testsInfo = await tx.attribute_tests.findMany(
+                { where: { id: { in: testIds } } });
 
             const dataToInsert = test_values.map((test: any) => {
                 const info = testsInfo.find(ti => ti.id === test.attribute_test_id);
@@ -186,65 +168,114 @@ export const createSnapshot = async (req: AuthRequest, res: Response): Promise<v
             return snapshot;
         });
 
-        res.status(201).json({ success: true, message: "Snapshot saved!", snapshot_id: result.id });
+        res.status(201).json({ success: true, message: "Snapshot updated!", snapshot_id: result.id });
     } catch (error: any) {
-        console.error("Create Snapshot Error:", error);
-        res.status(500).json({ success: false, error: "Failed to save snapshot" });
+        console.error("Update Snapshot Error:", error);
+        res.status(500).json({ success: false, error: "Failed to update snapshot" });
     }
-};
+};*/
 
-export const getSnapshots = async (req: AuthRequest, res: Response): Promise<void> => {
+// GET (get the snapshots values)
+/*export const getLatestTestValues = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const userId = req.user?.sub as string;
-        const limit = parseInt(req.query.limit as string) || 20;
-        const offset = parseInt(req.query.offset as string) || 0;
-        // Force TypeScript to accept Query type
-        const type = req.query.type as unknown as snapshot_type | undefined;
 
-        const whereClause: any = { user_id: userId };
-        if (type) whereClause.snapshot_type = type;
-
-        // Separated to prevent TypeScript issues
-        const totalCount = await prisma.physical_snapshots.count({ where: whereClause });
-        const snapshots = await prisma.physical_snapshots.findMany({
-            where: whereClause,
-            take: limit,
-            skip: offset,
-            orderBy: { created_at: 'desc' },
-            include: {
-                snapshot_test_values: { include: { attribute_tests: { select: { test_name: true } } } }
+        // 1. Locate the user's primary sport profile (same as radar)
+        const user = await prisma.users.findUnique({
+            where: { id: userId },
+            select: {
+                user_sport_profiles: {
+                    where: { is_primary: true },
+                    select: { sport_id: true }
+                }
             }
         });
 
-        const formattedSnapshots = snapshots.map(snap => ({
-            id: snap.id,
-            snapshot_type: snap.snapshot_type,
-            created_at: snap.created_at,
-            notes: snap.notes,
-            test_values: snap.snapshot_test_values.map(tv => ({
-                attribute_test_id: tv.attribute_test_id,
-                test_name: tv.attribute_tests?.test_name,
-                value: tv.value,
-                unit: tv.unit
-            }))
-        }));
+        if (!user) {
+            res.status(404).json({ success: false, error: "User not found." });
+            return;
+        }
 
-        res.status(200).json({ success: true, data: formattedSnapshots, meta: { total: totalCount, limit, offset } });
+        const primaryProfile = user.user_sport_profiles[0];
+        if (!primaryProfile) {
+            res.status(404).json({ success: false, error: "Primary sport profile not found." });
+            return;
+        }
+        const sportId = primaryProfile.sport_id;
+
+        // 2. Get all attribute tests for this sport
+        const attributes = await prisma.sport_attributes.findMany({
+            where: { sport_id: sportId },
+            orderBy: { display_order: 'asc' },
+            include: { attribute_tests: true }
+        });
+
+        if (attributes.length === 0) {
+            res.status(404).json({ success: false, error: "No attribute tests configured for this sport." });
+            return;
+        }
+
+        // 3. Fetch all snapshot values for this user/sport, ordered newest first
+        const allTestValues = await prisma.snapshot_test_values.findMany({
+            where: {
+                physical_snapshots: {
+                    user_id: userId,
+                    sport_id: sportId,
+                },
+                attribute_test_id: { in: attributes.map(t => t.id) }
+            },
+            include: {
+                physical_snapshots: {
+                    select: { created_at: true }
+                }
+            },
+            orderBy: {
+                physical_snapshots: { created_at: 'desc' }
+            }
+        });
+
+        // 4. Build a map of test_id → latest value (first occurrence wins because of desc order)
+        const latestMap = new Map<number, { value: number; unit: string }>();
+        for (const record of allTestValues) {
+            const testId = record.attribute_test_id;
+            if (!latestMap.has(testId)) {
+                latestMap.set(testId, {
+                    value: Number(record.value),
+                    unit: record.unit
+                });
+            }
+        }
+
+        // 5. Assemble response – only tests that have at least one recorded value
+        const testValues = attributes
+            .filter(test => latestMap.has(test.id))
+            .map(test => ({
+                attribute_test_id: test.id,
+                test_name: test.test_name,
+                value: String(latestMap.get(test.id)!.value),  // string to match example
+                unit: test.unit
+            }));
+
+        if (testValues.length === 0) {
+            res.status(404).json({ success: false, error: "No test data found for this user." });
+            return;
+        }
+
+        res.status(200).json({
+            success: true,
+            data: { test_values: testValues }
+        });
+
     } catch (error: any) {
-        console.error("Get Snapshots Error:", error);
-        res.status(500).json({ success: false, error: "Failed to fetch snapshots." });
+        console.error("Get Latest Test Values Error:", error);
+        res.status(500).json({ success: false, error: "Failed to fetch latest test values" });
     }
-};
+};*/
 
-// ==========================================
-// 3.5: Unified Radar & Punch Power Data (CR-14 & CR-15 fixed)
-// ==========================================
 
 export const getRadarData = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const userId = req.user?.sub as string;
-        const cohortLevel = req.query.cohort_level as unknown as competitive_level | undefined;
-        const cohortWeight = req.query.cohort_weight as unknown as weight_class | undefined;
 
         const user = await prisma.users.findUnique({
             where: { id: userId },
@@ -253,101 +284,51 @@ export const getRadarData = async (req: AuthRequest, res: Response): Promise<voi
                 user_sport_profiles: { where: { is_primary: true } }
             }
         });
-        const profile = user?.user_sport_profiles[0];
+
+        if (!user) {
+            res.status(404).json({ success: false, error: "User not found." });
+            return;
+        }
+
+        const profile = user.user_sport_profiles[0];
         if (!profile) {
             res.status(404).json({ success: false, error: "Profile not found." });
             return;
         }
 
-        const ageGroupId = getAgeGroupId(user!.date_of_birth);
-        const targetLevel = cohortLevel || profile.level;
-        const targetWeight = cohortWeight || profile.weight_class;
+        // Run both independent queries in parallel — no reason to wait on attributes
+        // before starting the metrics fetch, or vice versa.
+        const [attributes, scores] = await Promise.all([
+            prisma.sport_attributes.findMany({
+                where: { sport_id: profile.sport_id },
+                orderBy: { display_order: 'asc' },
+            }),
+            prisma.user_metrics.findUnique({
+                where: { user_id: userId }, // double-check this matches your actual PK/FK column name
+                select: {
+                    endurance_score: true,
+                    strength_score: true,
+                    explosiveness_score: true,
+                    aerobic_score: true,
+                    anaerobic_score: true,
+                } satisfies Record<keyof UserMetricsScores, true>,
+            }),
+        ]);
 
-        const latestSnapshot = await prisma.physical_snapshots.findFirst({
-            where: { user_id: userId },
-            orderBy: { created_at: 'desc' },
-            include: {
-                snapshot_test_values: {
-                    include: {
-                        attribute_tests: {
-                            include: { sport_attributes: true } // Fixed typo here
-                        }
-                    }
-                }
-            }
-        });
-
-        if (!latestSnapshot) {
-            res.status(404).json({ success: false, error: "No snapshot found." });
-            return;
-        }
-
-        const attributeMap = new Map<number, { name: string; tests: any[]; totalWeight: number }>();
-        for (const testVal of latestSnapshot.snapshot_test_values) {
-            const attr = testVal.attribute_tests?.sport_attributes;
-            if (!attr) continue;
-            const attrId = attr.id;
-            if (!attributeMap.has(attrId)) {
-                attributeMap.set(attrId, { name: attr.name, tests: [], totalWeight: 0 });
-            }
-            const entry = attributeMap.get(attrId)!;
-
-            // Modification: Read weight directly from the table
-            const weight = Number(testVal.attribute_tests?.weight || 1);
-
-            entry.tests.push({
-                testId: testVal.attribute_test_id,
-                rawValue: Number(testVal.value),
-                higherIsBetter: testVal.attribute_tests?.higher_is_better ?? true,
-                weight: weight,
-                unit: testVal.unit
-            });
-            entry.totalWeight += weight;
-        }
-
-        const radar_axes: any[] = [];
-        let foundationPct = 0, acceleratorPct = 0, transferPct = 0;
-
-        for (const [attrId, attrData] of attributeMap.entries()) {
-            let weightedPercentileSum = 0;
-            let highestFallback = 0;
-
-            for (const test of attrData.tests) {
-                const { percentile, fallbackLevel } = await getPercentileWithFallback(
-                    test.testId,
-                    test.rawValue,
-                    test.higherIsBetter,
-                    targetLevel,
-                    targetWeight,
-                    ageGroupId
-                );
-                weightedPercentileSum += percentile * test.weight;
-                if (fallbackLevel > highestFallback) highestFallback = fallbackLevel;
-
-                const testName = await getTestName(test.testId);
-                if (testName === 'Trap Bar Deadlift') foundationPct = percentile;
-                if (testName === 'Power Clean' || testName === 'Box Jump Height') acceleratorPct = percentile;
-                if (testName === 'Medicine Ball Rotational Throw') transferPct = percentile;
-            }
-
-            const finalPercentile = attrData.totalWeight > 0 ? weightedPercentileSum / attrData.totalWeight : 0;
-            radar_axes.push({ attribute_name: attrData.name, percentile: Math.round(finalPercentile), fallback_level: highestFallback });
-        }
-
-        const punch_power = {
-            score: calculatePunchPower(foundationPct, acceleratorPct, transferPct),
-            foundation: { percentile: foundationPct },
-            accelerator: { percentile: acceleratorPct },
-            transfer: { percentile: transferPct }
-        };
+        const radar_axes = attributes.map((attr) => ({
+            sport_attribute_id: attr.id,
+            attribute_name: attr.name,
+            display_order: attr.display_order,
+            // Looks up the right column by attribute name. Null covers two cases:
+            // no scores row exists yet (new user), or this attribute has no mapped
+            // column (seeded a new attribute but forgot to update the map above —
+            // at least it's explicit null instead of silently wrong data).
+            percentile: scores?.[ATTRIBUTE_METRIC_KEY[attr.name]] ?? null,
+        }));
 
         res.status(200).json({
             success: true,
-            data: {
-                radar_axes, punch_power,
-                cohort_used: { weight_class: targetWeight, level: targetLevel, age_group: ageGroupId === 2 ? '18-35' : (ageGroupId === 1 ? 'Under 18' : '35+') },
-                snapshot_date: latestSnapshot.created_at
-            }
+            data: { radar_axes },
         });
 
     } catch (error: any) {
@@ -369,9 +350,10 @@ export const getProgress = async (req: AuthRequest, res: Response): Promise<void
             return;
         }
 
+        // 3 requests to database?
         const [testInfo, user, profile] = await Promise.all([
             prisma.attribute_tests.findUnique({ where: { id: attributeTestId } }),
-            prisma.users.findUnique({ where: { id: userId }, select: { date_of_birth: true } }),
+            prisma.users.findUnique({ where: { id: userId } }),
             prisma.user_sport_profiles.findFirst({ where: { user_id: userId, is_primary: true } })
         ]);
 
@@ -383,9 +365,13 @@ export const getProgress = async (req: AuthRequest, res: Response): Promise<void
         const ageGroupId = getAgeGroupId(user.date_of_birth);
         const userLevel = profile.level;
         const userWeight = profile.weight_class;
-
-        // Modification: Handled null by adding a default value
         const higherIsBetter = testInfo.higher_is_better ?? true;
+
+        const cohort: Cohort = {
+            weight_class: userWeight,
+            level: userLevel,
+            age_group_id: ageGroupId
+        }
 
         const history = await prisma.physical_snapshots.findMany({
             where: {
@@ -401,21 +387,20 @@ export const getProgress = async (req: AuthRequest, res: Response): Promise<void
             }
         });
 
+
         const data_points = await Promise.all(history.map(async (snap) => {
             const rawValue = Number(snap.snapshot_test_values[0]?.value || 0);
-            const { percentile } = await getPercentileWithFallback(
+            const percentile = await computeAttributeScoreRaw(
                 attributeTestId,
-                rawValue,
-                higherIsBetter,
-                userLevel,
-                userWeight,
-                ageGroupId
+                cohort,
+                user.sex,
+                rawValue
             );
             return {
                 date: snap.created_at,
                 raw_value: rawValue,
                 snapshot_type: snap.snapshot_type,
-                percentile: Math.round(percentile)
+                percentile: percentile
             };
         }));
 
@@ -473,3 +458,209 @@ export const getMyEnrollments = async (req: AuthRequest, res: Response): Promise
         res.status(500).json({ success: false, error: "Failed to fetch enrollments." });
     }
 };
+
+export const completeOnboarding = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+        const { sport_id, level, weight_class, test_values } = req.body;
+
+        // 🛡️ Validation
+        if (!sport_id || !level || !weight_class || !test_values) {
+            return next(new AppError(
+                "Missing required fields: sport_id, level, weight_class, and test_values are required.",
+                400
+            ));
+        }
+
+        if (!Array.isArray(test_values) || test_values.length === 0) {
+            return next(new AppError("test_values must be a non-empty array.", 400));
+        }
+
+        // تحقق من صحة الـ sport
+        const sport = await prisma.sports.findUnique({
+            where: { id: Number(sport_id) },
+            include: {
+                sport_attributes: {
+                    include: {
+                        attribute_tests: true
+                    }
+                }
+            }
+        });
+
+        if (!sport) {
+            return next(new AppError("Sport not found.", 404));
+        }
+
+        // تحقق من صحة الـ test_values (إنها تابعة للرياضة دي)
+        const allTestIds = sport.sport_attributes.flatMap(attr =>
+            attr.attribute_tests.map(test => test.id)
+        );
+
+        for (const test of test_values) {
+            if (!allTestIds.includes(test.attribute_test_id)) {
+                return next(new AppError(
+                    `Invalid test_id: ${test.attribute_test_id} does not belong to this sport.`,
+                    400
+                ));
+            }
+        }
+
+        // 🎯 تنفيذ الـ Onboarding في Transaction واحد
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. إنشاء Sport Profile
+            const sportProfile = await tx.user_sport_profiles.create({
+                data: {
+                    user_id: userId,
+                    sport_id: Number(sport_id),
+                    level,
+                    weight_class,
+                    is_primary: true,
+                },
+            });
+
+            // 2. إنشاء Baseline Snapshot
+            const snapshot = await tx.physical_snapshots.create({
+                data: {
+                    user_id: userId,
+                    sport_id: Number(sport_id),
+                    snapshot_type: 'initial_onboarding',
+                    notes: `Initial onboarding baseline assessment for ${sport.name}`,
+                },
+            });
+
+            // 3. إضافة الـ Test Values
+            const testValuesData = test_values.map((test: any) => ({
+                snapshot_id: snapshot.id,
+                attribute_test_id: test.attribute_test_id,
+                value: test.value,
+                unit: test.unit || 'unknown',
+            }));
+
+            await tx.snapshot_test_values.createMany({
+                data: testValuesData,
+            });
+
+            // 4. (اختياري) تحديث user_metrics لو مش موجودة
+            // هنعملها بعدين لو احتجنا
+
+            return {
+                sportProfile,
+                snapshot,
+                testCount: testValuesData.length
+            };
+        });
+
+        res.status(201).json({
+            success: true,
+            message: "Onboarding completed successfully!",
+            data: {
+                sport_profile_id: result.sportProfile.id,
+                baseline_snapshot_id: result.snapshot.id,
+                tests_logged: result.testCount,
+                sport_name: sport.name,
+                level,
+                weight_class,
+            },
+        });
+        const existingProfile = await prisma.user_sport_profiles.findFirst({
+            where: { user_id: userId, is_primary: true }
+        });
+        if (existingProfile) {
+            return next(new AppError("Onboarding already completed. Use settings to update profile.", 409));
+        }
+
+    } catch (error: any) {
+        console.error("Complete Onboarding Error:", error);
+        return next(new AppError(error.message || "Failed to complete onboarding.", 500));
+    }
+};
+
+// ==========================================
+// 3. معرفة حالة الـ Onboarding
+// ==========================================
+export const getOnboardingStatus = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.sub as string;
+
+        // 1. جلب الـ Sport Profile الأساسي
+        const sportProfile = await prisma.user_sport_profiles.findFirst({
+            where: { user_id: userId, is_primary: true },
+            include: {
+                sports: {
+                    select: {
+                        id: true,
+                        name: true,
+                        icon: true,
+                    }
+                }
+            }
+        });
+
+        // 2. جلب الـ User Metrics
+        const metrics = await prisma.user_metrics.findUnique({
+            where: { user_id: userId }
+        });
+
+        // 3. جلب أحدث Snapshot (عشان نشوف إذا كان في Baseline)
+        const latestSnapshot = await prisma.physical_snapshots.findFirst({
+            where: {
+                user_id: userId,
+                snapshot_type: 'initial_onboarding'
+            },
+            orderBy: { created_at: 'desc' },
+            include: {
+                snapshot_test_values: {
+                    take: 1 // عشان نشوف لو في قياسات أصلاً
+                }
+            }
+        });
+
+        // 🎯 حساب الـ Status
+        const hasSportProfile = !!sportProfile;
+        const hasMetrics = !!metrics;
+        const hasBaselineSnapshot = !!latestSnapshot && latestSnapshot.snapshot_test_values.length > 0;
+
+        // هل الـ Onboarding مكتمل؟
+        const isComplete = hasSportProfile && hasMetrics && hasBaselineSnapshot;
+
+        // إيه الخطوة الناقصة؟
+        let missingSteps: string[] = [];
+        if (!hasSportProfile) missingSteps.push('sport_profile');
+        if (!hasMetrics) missingSteps.push('user_metrics');
+        if (!hasBaselineSnapshot) missingSteps.push('baseline_snapshot');
+
+        // Progress Percentage
+        let progressPercentage = 0;
+        if (hasSportProfile) progressPercentage += 33;
+        if (hasMetrics) progressPercentage += 33;
+        if (hasBaselineSnapshot) progressPercentage += 34;
+
+        res.status(200).json({
+            success: true,
+            data: {
+                is_complete: isComplete,
+                progress_percentage: progressPercentage,
+                missing_steps: missingSteps,
+                sport_profile: sportProfile ? {
+                    id: sportProfile.id,
+                    sport_id: sportProfile.sport_id,
+                    sport_name: sportProfile.sports?.name,
+                    level: sportProfile.level,
+                    weight_class: sportProfile.weight_class,
+                } : null,
+                has_metrics: hasMetrics,
+                has_baseline: hasBaselineSnapshot,
+                baseline_snapshot_id: latestSnapshot?.id || null,
+            }
+        });
+
+    } catch (error: any) {
+        console.error("Get Onboarding Status Error:", error);
+        return next(new AppError("Failed to get onboarding status.", 500));
+    }
+};
+
+// ==========================================
+// 4. Middleware: التحقق من إكمال الـ Onboarding
+// ==========================================

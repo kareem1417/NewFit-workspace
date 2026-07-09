@@ -1,4 +1,4 @@
-import { Router } from 'express';
+/*import { Router } from 'express';
 import { askQuestion, recommendProgram, getCoachAdvice, getSessions, getSessionMessages } from '../controllers/ai.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
 
@@ -18,4 +18,4 @@ router.post('/coach', authenticateToken, getCoachAdvice);
 router.get('/sessions', authenticateToken, getSessions);
 router.get('/sessions/:id/messages', authenticateToken, getSessionMessages);
 
-export default router;
+export default router;*/

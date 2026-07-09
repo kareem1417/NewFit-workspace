@@ -5,6 +5,6 @@ import { authenticateToken } from '../middlewares/auth.middleware';
 const router = Router();
 
 // Fetch leaderboard route
-router.get('/:type', authenticateToken, getLeaderboard);
+router.get('/:attribute', authenticateToken, getLeaderboard);
 
 export default router;

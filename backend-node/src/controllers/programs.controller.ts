@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
+import { UnauthorizedError } from '../utils/errors/error-factories';
 
 // --- 4.1 Create Program (Coach Only) ---
 export const createProgram = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -308,6 +309,7 @@ export const enrollInProgram = async (req: AuthRequest, res: Response): Promise<
             testsInfo.forEach(t => { testUnits[t.id] = t.unit; });
         }
 
+
         const transactionResult = await prisma.$transaction(async (tx) => {
             const baselineSnapshot = await tx.physical_snapshots.create({
                 data: {
@@ -445,6 +447,7 @@ export const completeEnrollment = async (req: AuthRequest, res: Response): Promi
             const user = await tx.users.findUnique({ where: { id: userId }, select: { username: true } });
             const testimonial = `${user?.username || 'A user'} completed "${enrollment.programs.title}" and leveled up their stats! 📈🥊`;
 
+            // lazm ys2l el user 2abl ma el post ynzl
             await tx.posts.create({
                 data: {
                     user_id: userId,

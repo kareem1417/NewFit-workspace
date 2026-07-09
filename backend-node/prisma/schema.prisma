@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  extensions = [uuidOssp(map: "uuid-ossp"), vector]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -139,7 +141,8 @@ model normative_data {
   id                Int               @id @default(autoincrement())
   sport_id          Int
   attribute_test_id Int
-  weight_class      weight_class
+  sex               String            @db.VarChar(10) @default("male")
+  weight_class      weight_class?
   level             competitive_level
   age_group_id      Int
   mean_value        Decimal           @db.Decimal(10, 2)
@@ -326,6 +329,20 @@ model sports {
   user_sport_profiles user_sport_profiles[]
 }
 
+model sport_performance_clusters {
+  id                   Int           @id @default(autoincrement())
+  user_sport_profiles_id String            @db.Uuid
+  
+  goal_cluster         user_goal_enum      
+  component_type       ComponentType     
+  component_name       String        @db.VarChar(100)
+  why_it_matters       String        @db.Text
+  recommended_exercise String    @db.Text
+  created_at           DateTime?     @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime?     @default(now()) @db.Timestamptz(6)
+  user_sport_profiles  user_sport_profiles  @relation(fields: [user_sport_profiles_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
 model user_sport_profiles {
   id           String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   user_id      String            @db.Uuid
@@ -337,6 +354,7 @@ model user_sport_profiles {
   updated_at   DateTime?         @default(now()) @db.Timestamptz(6)
   sports       sports            @relation(fields: [sport_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users        users             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sport_performance_clusters sport_performance_clusters[]
 
   @@unique([user_id, sport_id])
 }
@@ -355,7 +373,7 @@ model user_tokens {
 // 📌 الجدول الجديد الخاص بالقياسات (يتم ربطه باليوزر 1-to-1)
 model user_metrics {
   id                     String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id                String         @unique @db.Uuid
+  user_id                String         @unique @db.Uuid 
   height_cm              Decimal        @db.Decimal(5, 2)
   weight_kg              Decimal        @db.Decimal(5, 2)
   goal                   user_goal_enum
@@ -363,14 +381,22 @@ model user_metrics {
   years_training         Decimal        @db.Decimal(4, 2)
   has_injury_history     Boolean        @default(false)
 
-  // التقييمات من 1 لـ 10
-  endurance_score     Int @default(5)
-  strength_score      Int @default(5)
-  speed_score         Int @default(5)
-  flexibility_score   Int @default(5)
-  explosiveness_score Int @default(5)
-  recovery_score      Int @default(5)
-
+  // التقييمات من 1 لـ 100
+  endurance_score     Int 
+  strength_score      Int 
+  anaerobic_score     Int 
+  aerobic_score       Int
+  explosiveness_score Int
+  
+  // Self asses for Ai use (Randomized in seed)
+  punch_power_score Int?
+  hand_speed_score  Int?
+  clinch_control_score Int?
+  shooting_power_score Int?
+  agility_score Int?
+  jump_height_score Int?
+  speed_score       Int?
+ 
   created_at DateTime? @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -380,6 +406,7 @@ model user_metrics {
 model users {
   id                                 String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   username                           String                   @unique @db.VarChar(50)
+  sex                                String                   @db.VarChar(10)
   email                              String                   @unique @db.VarChar(255)
   password_hash                      String                   @db.VarChar(255)
   role                               user_role                @default(athlete)
@@ -404,10 +431,8 @@ model users {
   programs                           programs[]
   user_sport_profiles                user_sport_profiles[]
   user_tokens                        user_tokens[]
-
-  // 📌 تم إضافة العلاقة هنا
-  user_metrics      user_metrics?
-  completedSessions completed_sessions[]
+  user_metrics                       user_metrics?
+  completedSessions                  completed_sessions[]
 
   @@index([search_vector], map: "users_search_idx", type: Gin)
 }
@@ -430,10 +455,18 @@ enum enrollment_status {
 }
 
 enum program_goal {
-  strength
-  explosiveness
-  endurance
-  power
+  Strength
+  Explosiveness
+  Endurance
+  Aerobic_Endurance
+  Anaerobic_Capacity
+  Punch_Power
+  Hand_speed
+  Clinch_control
+  Shooting_Power
+  Agility
+  Jump_Height
+  Speed
   general
 }
 
@@ -473,12 +506,19 @@ enum weight_class {
 
 // 📌 الـ Enum الجديد الخاص بأهداف اليوزر
 enum user_goal_enum {
-  Weight_Loss @map("Weight Loss")
-  Muscle_Gain @map("Muscle Gain")
-  Endurance
   Strength
+  Explosiveness
+  Endurance
+  Aerobic_Endurance
+  Anaerobic_Capacity
+  Punch_Power
+  Hand_speed
+  Clinch_control
+  Shooting_power
   Agility
+  Jump_Height
   Speed
+  general
 }
 
 model completed_sessions {
@@ -510,3 +550,12 @@ model completed_exercises {
   completed_sessions completed_sessions @relation(fields: [completed_session_id], references: [id], onDelete: Cascade)
   session_exercises  session_exercises  @relation(fields: [session_exercise_id], references: [id], onDelete: Cascade)
 }
+
+
+// 1. Define the enum for component types (maps to your CHECK constraint)
+enum ComponentType {
+  Foundation
+  Accelerator
+  Transfer
+}
+
