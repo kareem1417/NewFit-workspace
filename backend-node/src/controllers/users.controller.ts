@@ -52,6 +52,7 @@ export const getMe = async (
           where: { is_primary: true },
           include: { sports: true },
         },
+        coach_profile: true,
       },
     });
 
@@ -282,6 +283,7 @@ export const getPublicProfile = async (
           where: { is_primary: true },
           include: { sports: true },
         },
+        coach_profile: true,
       },
     });
 
@@ -314,18 +316,31 @@ export const getPublicProfile = async (
 
     const userAny = targetUser as any;
     const sportProfiles = userAny.user_sport_profiles || [];
+    const coachProfile = userAny.coach_profile
+      ? {
+          sport: userAny.coach_profile.sport,
+          level: userAny.coach_profile.level,
+        }
+      : null;
 
     const cleanedSportProfiles = sportProfiles.map(
       ({ user_id, ...rest }: any) => rest,
     );
 
-    const { password_hash, email, date_of_birth, ...publicData } = userAny;
+    const {
+      password_hash,
+      email,
+      date_of_birth,
+      coach_profile,
+      ...publicData
+    } = userAny;
 
     res.status(200).json({
       success: true,
       data: {
         ...publicData,
         user_sport_profiles: cleanedSportProfiles,
+        coach_profile: coachProfile,
         followers_count: followersCount,
         following_count: followingCount,
         posts_count: postsCount,

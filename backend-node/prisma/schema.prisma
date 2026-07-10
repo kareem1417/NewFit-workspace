@@ -364,6 +364,20 @@ model user_metrics {
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
   users users @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
+model coach_profiles {
+  id         String            @id @default(uuid()) @db.Uuid
+  user_id    String            @unique @db.Uuid
+  sport      String            @db.VarChar(80)
+  level      competitive_level
+  created_at DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at DateTime?         @default(now()) @updatedAt @db.Timestamptz(6)
+
+  users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([sport])
+  @@index([level])
+}
+
 
 model users {
   full_name                          String?                @db.VarChar(100)
@@ -381,6 +395,7 @@ model users {
   created_at                         DateTime?              @default(now()) @db.Timestamptz(6)
   updated_at                         DateTime?              @default(now()) @db.Timestamptz(6)
   search_vector                      Unsupported("tsvector")?
+
   chat_sessions                      chat_sessions[]
   comments                           comments[]
   enrollments                        enrollments[]
@@ -393,11 +408,15 @@ model users {
   programs                           programs[]
   user_sport_profiles                user_sport_profiles[]
   user_tokens                        user_tokens[]
-  user_metrics      user_metrics?
-  completedSessions completed_sessions[]
+  user_metrics                       user_metrics?
+  completedSessions                  completed_sessions[]
+
+  // New
+  coach_profile                      coach_profiles?
 
   @@index([search_vector], map: "users_search_idx", type: Gin)
 }
+
 
 enum chat_role {
   user

@@ -329,12 +329,33 @@ export const getLeaderboard = async (
       userAgeGroupMap.set(u.id, getAgeGroupId(u.date_of_birth));
     }
 
-    const selectedTestIds =
-      type === "punch_power"
-        ? [1, 2, 4]
-        : type === "strength"
-          ? [1, 5, 6]
-          : [7, 8, 9];
+    // Dynamically resolve test IDs based on sport attribute names
+    const attributeNamesByType: Record<string, string[]> = {
+      punch_power: ["Punch Power", "Hand Speed"],
+      strength: ["Punch Power", "Footwork & Agility", "Defense & Reflexes"],
+      endurance: ["Footwork & Agility", "Defense & Reflexes", "Hand Speed"],
+    };
+
+    const targetAttributeNames = attributeNamesByType[type] || attributeNamesByType["punch_power"];
+
+    const matchingAttributes = await prisma.sport_attributes.findMany({
+      where: {
+        sport_id: currentUserProfile.sport_id,
+        name: { in: targetAttributeNames },
+      },
+      select: { id: true },
+    });
+
+    const matchingAttributeIds = matchingAttributes.map((a) => a.id);
+
+    const matchingTests = await prisma.attribute_tests.findMany({
+      where: {
+        sport_attribute_id: { in: matchingAttributeIds },
+      },
+      select: { id: true },
+    });
+
+    const selectedTestIds = matchingTests.map((t) => t.id);
 
     const scores = await Promise.all(
       cohortUserIds.map(async (uid) => {
@@ -530,7 +551,20 @@ export const getMostImproved = async (
     let leaderboardData: any[] = [];
 
     if (rawImprovedResults && rawImprovedResults.length > 0) {
-      const punchPowerTestIds = [1, 2, 4]; // ممكن تخليها Dynamic بعدين زي GetLeaderboard
+      // Dynamically resolve test IDs for punch power
+      const punchPowerAttributes = await prisma.sport_attributes.findMany({
+        where: {
+          sport_id: currentUserProfile.sport_id,
+          name: { in: ["Punch Power", "Hand Speed"] },
+        },
+        select: { id: true },
+      });
+      const punchPowerAttrIds = punchPowerAttributes.map((a) => a.id);
+      const punchPowerTests = await prisma.attribute_tests.findMany({
+        where: { sport_attribute_id: { in: punchPowerAttrIds } },
+        select: { id: true },
+      });
+      const punchPowerTestIds = punchPowerTests.map((t) => t.id);
 
       const improvementData = await Promise.all(
         rawImprovedResults.map(async (ath) => {

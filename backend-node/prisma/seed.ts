@@ -5,34 +5,71 @@ const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Starting seed...');
-  console.log("🧹 Cleaning up existing data...");
+  console.log('🧹 Cleaning up existing data...');
 
-    // 1. مسح الجداول اللي معتمدة على الـ Enrollments والـ Programs
-    await prisma.completed_exercises.deleteMany();
-    await prisma.completed_sessions.deleteMany();
-    await prisma.program_ratings.deleteMany();
-    await prisma.snapshot_test_values.deleteMany();
-    await prisma.physical_snapshots.deleteMany();
-    await prisma.enrollments.deleteMany();
-    await prisma.posts.deleteMany();
+  // ==========================================
+  // CLEANUP — delete children before parents
+  // ==========================================
 
-    // 2. مسح البرامج نفسها وبلوكاتها (ده اللي هيعالج المشكلة)
-    await prisma.session_exercises.deleteMany();
-    await prisma.program_sessions.deleteMany();
-    await prisma.program_blocks.deleteMany();
-    await prisma.programs.deleteMany(); // ✅ هنا بنمسح البرامج قبل الرياضات
+  // Completed workout tracking
+  await prisma.completed_exercises.deleteMany();
+  await prisma.completed_sessions.deleteMany();
 
-    // 3. مسح بيانات اليوزر
-    await prisma.user_sport_profiles.deleteMany();
-    await prisma.normative_data.deleteMany();
+  // Ratings/enrollments/snapshots
+  await prisma.program_ratings.deleteMany();
+  await prisma.snapshot_test_values.deleteMany();
 
-    // 4. أخيراً مسح الرياضات (دلوقتي هتتمسح عادي جداً)
-    await prisma.attribute_tests.deleteMany();
-    await prisma.sport_attributes.deleteMany();
-    await prisma.sports.deleteMany();
-    await prisma.age_groups.deleteMany();
+  // Break circular FK:
+  // physical_snapshots.program_enrollment_id -> enrollments.id
+  // enrollments.baseline_snapshot_id -> physical_snapshots.id
+  await prisma.physical_snapshots.updateMany({
+    data: {
+      program_enrollment_id: null,
+    },
+  });
 
-    console.log("✅ Database cleaned");
+  await prisma.enrollments.deleteMany();
+  await prisma.physical_snapshots.deleteMany();
+
+  // Social data
+  await prisma.likes.deleteMany();
+  await prisma.comments.deleteMany();
+  await prisma.posts.deleteMany();
+  await prisma.follows.deleteMany();
+
+  // Chat data
+  await prisma.chat_messages.deleteMany();
+  await prisma.chat_sessions.deleteMany();
+
+  // Program structure
+  await prisma.session_exercises.deleteMany();
+  await prisma.program_sessions.deleteMany();
+  await prisma.program_blocks.deleteMany();
+  await prisma.programs.deleteMany();
+
+  // User-related data
+  await prisma.user_tokens.deleteMany();
+  await prisma.user_metrics.deleteMany();
+  await prisma.user_sport_profiles.deleteMany();
+  await prisma.coach_profiles.deleteMany();
+
+  // Users
+  await prisma.users.deleteMany();
+
+  // Sports/tests/normative data
+  await prisma.normative_data.deleteMany();
+  await prisma.attribute_tests.deleteMany();
+  await prisma.sport_attributes.deleteMany();
+  await prisma.age_groups.deleteMany();
+  await prisma.sports.deleteMany();
+
+  // Optional independent AI knowledge table
+  await prisma.knowledge_chunks.deleteMany();
+
+  console.log('✅ Existing data cleaned');
+
+  // ==========================================
+  // 1. SPORTS
 
   // ==========================================
   // 1. SPORTS
@@ -190,7 +227,7 @@ async function main() {
 
     // Cardiovascular Endurance
     { sport_attribute_id: attributes[15].id, test_name: '400m Freestyle Time', weight: 0.6, unit: 'seconds', higher_is_better: false, description: 'Endurance swim test' },
-    { sport_attribute_id: attributes[16].id, test_name: 'VO2max Treadmill Test', weight: 0.4, unit: 'ml/kg/min', higher_is_better: true, description: 'Maximum oxygen uptake' },
+    { sport_attribute_id: attributes[15].id, test_name: 'VO2max Treadmill Test', weight: 0.4, unit: 'ml/kg/min', higher_is_better: true, description: 'Maximum oxygen uptake' },
 
     // --- TENNIS TESTS ---
     // Serve Velocity
@@ -228,51 +265,87 @@ async function main() {
 
   console.log(`✅ Created ${ageGroups.length} age groups`);
 
-  // Create normative data for boxing tests (simplified example)
-  const boxingPunchForceTest = tests[1]; // Punch Force Dynamometer
-  const normativeDataEntries = [
-    {
-      sport_id: sports[0].id,
-      attribute_test_id: boxingPunchForceTest.id,
-      player_category: 'welterweight' as const,
-      level: 'amateur' as const,
-      age_group_id: ageGroups[1].id,
-      mean_value: 450.0,
-      std_dev: 75.0,
-      sample_size: 200,
-      source: 'AIBA Boxing Standards 2025',
-    },
-    {
-      sport_id: sports[0].id,
-      attribute_test_id: boxingPunchForceTest.id,
-      player_category: 'heavyweight' as const,
-      level: 'professional' as const,
-      age_group_id: ageGroups[1].id,
-      mean_value: 650.0,
-      std_dev: 90.0,
-      sample_size: 150,
-      source: 'WBC Performance Database',
-    },
+  // Create comprehensive normative data for ALL boxing tests
+  // Boxing tests order: [0]=Med Ball Rot Throw, [1]=Punch Force, [2]=Accel Punch Speed, [3]=30s Punch Count,
+  //                     [4]=T-Test Agility, [5]=Ladder Drill, [6]=Reaction Time, [7]=Slip Line Efficiency
+  const boxingTestNorms = [
+    // Test 0: Medicine Ball Rotational Throw (meters, higher is better)
+    { testIdx: 0, mean: 7.5, stdDev: 1.2 },
+    // Test 1: Punch Force Dynamometer (kg, higher is better)
+    { testIdx: 1, mean: 450.0, stdDev: 75.0 },
+    // Test 2: Accelerometer Punch Speed (m/s, higher is better)
+    { testIdx: 2, mean: 12.0, stdDev: 2.5 },
+    // Test 3: 30-Second Punch Count (reps, higher is better)
+    { testIdx: 3, mean: 85.0, stdDev: 15.0 },
+    // Test 4: T-Test Agility (seconds, lower is better)
+    { testIdx: 4, mean: 10.5, stdDev: 1.0 },
+    // Test 5: Ladder Drill Time (seconds, lower is better)
+    { testIdx: 5, mean: 9.5, stdDev: 0.8 },
+    // Test 6: Reaction Time Test (ms, lower is better)
+    { testIdx: 6, mean: 250.0, stdDev: 30.0 },
+    // Test 7: Slip Line Efficiency (percentage, higher is better)
+    { testIdx: 7, mean: 75.0, stdDev: 10.0 },
   ];
+
+  const weightClasses = ['middleweight', 'welterweight', 'light_middleweight', 'super_middleweight', 'lightweight'] as const;
+  const levels = ['amateur'] as const;
+
+  const normativeDataEntries: any[] = [];
+  for (const wc of weightClasses) {
+    for (const lvl of levels) {
+      for (const norm of boxingTestNorms) {
+        normativeDataEntries.push({
+          sport_id: sports[0].id,
+          attribute_test_id: tests[norm.testIdx].id,
+          player_category: wc,
+          level: lvl,
+          age_group_id: ageGroups[1].id,
+          mean_value: norm.mean,
+          std_dev: norm.stdDev,
+          sample_size: 200,
+          source: 'AIBA Boxing Standards 2025',
+        });
+      }
+    }
+  }
+
+  // Also add heavyweight/professional norms
+  normativeDataEntries.push({
+    sport_id: sports[0].id,
+    attribute_test_id: tests[1].id,
+    player_category: 'heavyweight' as const,
+    level: 'professional' as const,
+    age_group_id: ageGroups[1].id,
+    mean_value: 650.0,
+    std_dev: 90.0,
+    sample_size: 150,
+    source: 'WBC Performance Database',
+  });
 
   for (const entry of normativeDataEntries) {
     await prisma.normative_data.create({ data: entry });
   }
 
-  console.log(`✅ Created normative data entries`);
+  console.log(`✅ Created ${normativeDataEntries.length} normative data entries`);
 
   // ==========================================
   // 5. SAMPLE PROGRAMS (1 per sport for demo)
   // ==========================================
 
   // Create a demo coach user
+  // Create a demo coach user
   const demoCoach = await prisma.users.upsert({
     where: { email: 'coach@neofit.com' },
-    update: {},
+    update: {
+      username: 'coach_mike',
+      role: 'coach',
+      full_name: 'Coach Mike Tyson',
+      bio: 'Professional boxing coach with 20 years experience',
+    },
     create: {
       username: 'coach_mike',
       email: 'coach@neofit.com',
-      password_hash: '$2b$10$placeholder_hash_for_demo', // In real app, use proper hash
+      password_hash: '$2b$10$placeholder_hash_for_demo',
       role: 'coach',
       full_name: 'Coach Mike Tyson',
       date_of_birth: new Date('1980-06-30'),
@@ -280,10 +353,17 @@ async function main() {
     },
   });
 
+  // Create coach profile AFTER demoCoach exists
+
+
   // Create demo athlete user
   const demoAthlete = await prisma.users.upsert({
     where: { email: 'athlete@neofit.com' },
-    update: {},
+    update: {
+      username: 'ahmed_boxer',
+      role: 'athlete',
+      full_name: 'Ahmed Ali',
+    },
     create: {
       username: 'ahmed_boxer',
       email: 'athlete@neofit.com',
@@ -294,7 +374,63 @@ async function main() {
     },
   });
 
-  console.log(`✅ Created demo users`);
+  console.log(`✅ Created demo users and coach profile`);
+
+  await prisma.user_sport_profiles.upsert({
+    where: {
+      user_id_sport_id: {
+        user_id: demoAthlete.id,
+        sport_id: sports[0].id,
+      },
+    },
+    update: {
+      level: 'amateur',
+      player_category: 'welterweight',
+      is_primary: true,
+    },
+    create: {
+      user_id: demoAthlete.id,
+      sport_id: sports[0].id,
+      level: 'amateur',
+      player_category: 'welterweight',
+      is_primary: true,
+    },
+  });
+
+  await prisma.user_metrics.upsert({
+    where: { user_id: demoAthlete.id },
+    update: {
+      height_cm: 175,
+      weight_kg: 75,
+      goal: 'Power',
+      training_days_per_week: 4,
+      years_training: 2.5,
+      has_injury_history: false,
+      endurance_score: 6,
+      strength_score: 7,
+      speed_score: 8,
+      flexibility_score: 5,
+      explosiveness_score: 8,
+      recovery_score: 6,
+    },
+    create: {
+      user_id: demoAthlete.id,
+      height_cm: 175,
+      weight_kg: 75,
+      goal: 'Power',
+      training_days_per_week: 4,
+      years_training: 2.5,
+      has_injury_history: false,
+      endurance_score: 6,
+      strength_score: 7,
+      speed_score: 8,
+      flexibility_score: 5,
+      explosiveness_score: 8,
+      recovery_score: 6,
+    },
+  });
+
+  console.log(`✅ Created demo athlete profile and metrics`);
 
   // ==========================================
   // 6. PROGRAMS WITH FULL STRUCTURE
@@ -701,6 +837,53 @@ async function main() {
       notes: 'Initial baseline snapshot generated by seed',
     },
   });
+  await prisma.snapshot_test_values.createMany({
+    data: [
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[0].id,
+        value: 7.5,
+        unit: tests[0].unit,
+      },
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[1].id,
+        value: 480,
+        unit: tests[1].unit,
+      },
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[3].id,
+        value: 95,
+        unit: tests[3].unit,
+      },
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[4].id,
+        value: 10.8,
+        unit: tests[4].unit,
+      },
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[5].id,
+        value: 9.7,
+        unit: tests[5].unit,
+      },
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[6].id,
+        value: 240,
+        unit: tests[6].unit,
+      },
+      {
+        snapshot_id: dummySnapshot.id,
+        attribute_test_id: tests[7].id,
+        value: 82,
+        unit: tests[7].unit,
+      },
+    ],
+  });
+
 
   // 2. Create the enrollment using the real ID of the dummy snapshot
   const sampleEnrollment = await prisma.enrollments.create({
@@ -723,14 +906,133 @@ async function main() {
 
   console.log(`✅ Created sample enrollment for demo athlete`);
 
+  // ==========================================
+  // 8. SEED LEADERBOARD ATHLETES (Arabic Names)
+  // ==========================================
+  console.log('🏆 Seeding leaderboard athletes...');
+
+  const seedAthletes = [
+    { username: 'ahmad_boxer', email: 'ahmad@neofit.com', fullName: 'أحمد محمد الشريف', dob: '1998-03-15', category: 'middleweight' as const },
+    { username: 'youssef_strong', email: 'youssef@neofit.com', fullName: 'يوسف عبدالله العمري', dob: '1997-07-22', category: 'middleweight' as const },
+    { username: 'khaled_tiger', email: 'khaled@neofit.com', fullName: 'خالد إبراهيم الحربي', dob: '1999-01-10', category: 'middleweight' as const },
+    { username: 'omar_thunder', email: 'omar@neofit.com', fullName: 'عمر سعد الغامدي', dob: '2000-11-05', category: 'middleweight' as const },
+    { username: 'mohammed_champ', email: 'mohammed@neofit.com', fullName: 'محمد فهد القحطاني', dob: '1996-06-18', category: 'middleweight' as const },
+    { username: 'sultan_iron', email: 'sultan@neofit.com', fullName: 'سلطان عبدالرحمن الدوسري', dob: '1998-09-30', category: 'middleweight' as const },
+    { username: 'fahd_lightning', email: 'fahd@neofit.com', fullName: 'فهد ناصر المطيري', dob: '2001-02-14', category: 'middleweight' as const },
+    { username: 'abdullah_fighter', email: 'abdullah@neofit.com', fullName: 'عبدالله خالد الشمري', dob: '1999-08-25', category: 'middleweight' as const },
+    { username: 'saad_thunder', email: 'saad@neofit.com', fullName: 'سعد تركي العتيبي', dob: '1997-12-03', category: 'welterweight' as const },
+    { username: 'nasser_steel', email: 'nasser@neofit.com', fullName: 'ناصر محمد الزهراني', dob: '2000-04-20', category: 'welterweight' as const },
+    { username: 'turki_lion', email: 'turki@neofit.com', fullName: 'تركي سلطان السبيعي', dob: '1998-10-11', category: 'light_middleweight' as const },
+    { username: 'bandar_fist', email: 'bandar@neofit.com', fullName: 'بندر عبدالعزيز الرشيدي', dob: '1999-05-07', category: 'super_middleweight' as const },
+    { username: 'majed_speed', email: 'majed@neofit.com', fullName: 'ماجد حمد المالكي', dob: '2001-01-28', category: 'lightweight' as const },
+    { username: 'rakan_rock', email: 'rakan@neofit.com', fullName: 'راكان فيصل الحارثي', dob: '1997-03-16', category: 'middleweight' as const },
+    { username: 'hassan_storm', email: 'hassan@neofit.com', fullName: 'حسن علي الجهني', dob: '2000-07-09', category: 'middleweight' as const },
+  ];
+
+  // Randomized but realistic test value ranges for each boxing test
+  // [0]=Med Ball Throw (m), [1]=Punch Force (kg), [2]=Punch Speed (m/s), [3]=30s Count (reps)
+  // [4]=T-Test (s), [5]=Ladder (s), [6]=Reaction (ms), [7]=Slip Efficiency (%)
+  const testValueRanges = [
+    { min: 5.5, max: 10.0 },   // Med Ball Rotational Throw
+    { min: 320, max: 620 },    // Punch Force Dynamometer
+    { min: 8.0, max: 16.0 },   // Accelerometer Punch Speed
+    { min: 60, max: 115 },     // 30-Second Punch Count
+    { min: 8.5, max: 12.5 },   // T-Test Agility
+    { min: 7.8, max: 11.2 },   // Ladder Drill Time
+    { min: 180, max: 320 },    // Reaction Time Test
+    { min: 55, max: 95 },      // Slip Line Efficiency
+  ];
+
+  // Deterministic pseudo-random seed based on index
+  const getTestValue = (athleteIdx: number, testIdx: number): number => {
+    const range = testValueRanges[testIdx];
+    // Use a simple deterministic formula for variety
+    const factor = ((athleteIdx * 7 + testIdx * 13 + 37) % 100) / 100;
+    const value = range.min + (range.max - range.min) * factor;
+    return Number(value.toFixed(2));
+  };
+
+  for (let i = 0; i < seedAthletes.length; i++) {
+    const athlete = seedAthletes[i];
+
+    const user = await prisma.users.create({
+      data: {
+        username: athlete.username,
+        email: athlete.email,
+        password_hash: '$2b$10$placeholder_hash_for_seed',
+        role: 'athlete',
+        full_name: athlete.fullName,
+        date_of_birth: new Date(athlete.dob),
+        bio: `ملاكم هاوي - ${athlete.category}`,
+      },
+    });
+
+    await prisma.user_sport_profiles.create({
+      data: {
+        user_id: user.id,
+        sport_id: sports[0].id,
+        level: 'amateur',
+        player_category: athlete.category,
+        is_primary: true,
+      },
+    });
+
+    const goals = ['Power', 'Strength', 'Speed', 'Endurance', 'General'] as const;
+    await prisma.user_metrics.create({
+      data: {
+        user_id: user.id,
+        height_cm: 170 + (i % 15),
+        weight_kg: 68 + (i % 12),
+        goal: goals[i % goals.length],
+        training_days_per_week: 3 + (i % 4),
+        years_training: 1.0 + (i % 8) * 0.5,
+        has_injury_history: i % 5 === 0,
+        endurance_score: 4 + (i % 6),
+        strength_score: 5 + (i % 5),
+        speed_score: 4 + (i % 7),
+        flexibility_score: 3 + (i % 6),
+        explosiveness_score: 5 + (i % 5),
+        recovery_score: 4 + (i % 6),
+      },
+    });
+
+    // Create a physical snapshot with test values for ALL 8 boxing tests
+    const snapshot = await prisma.physical_snapshots.create({
+      data: {
+        user_id: user.id,
+        sport_id: sports[0].id,
+        snapshot_type: 'initial_onboarding',
+        notes: `Baseline snapshot for ${athlete.fullName}`,
+      },
+    });
+
+    // Add test values for all 8 boxing tests
+    const snapshotTestData = [];
+    for (let t = 0; t < 8; t++) {
+      snapshotTestData.push({
+        snapshot_id: snapshot.id,
+        attribute_test_id: tests[t].id,
+        value: getTestValue(i, t),
+        unit: tests[t].unit,
+      });
+    }
+
+    await prisma.snapshot_test_values.createMany({
+      data: snapshotTestData,
+    });
+  }
+
+  console.log(`✅ Created ${seedAthletes.length} leaderboard athletes with Arabic names`);
+
   console.log('\n🎉 Seed completed successfully!');
   console.log('='.repeat(50));
   console.log('Summary:');
   console.log(`  - ${sports.length} Sports`);
   console.log(`  - ${attributes.length} Sport Attributes`);
   console.log(`  - ${tests.length} Attribute Tests`);
+  console.log(`  - ${normativeDataEntries.length} Normative Data Entries`);
   console.log(`  - ${programs.length} Full Programs`);
-  console.log(`  - Demo Users: coach@neofit.com / athlete@neofit.com`);
+  console.log(`  - ${seedAthletes.length + 2} Users (${seedAthletes.length} athletes + coach + demo athlete)`);
   console.log('='.repeat(50));
 }
 
