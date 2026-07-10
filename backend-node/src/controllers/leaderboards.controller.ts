@@ -240,17 +240,27 @@ export const getLeaderboard = async (
 ): Promise<void> => {
   try {
     const userId = req.user?.sub ? String(req.user.sub) : null;
+
     if (!userId) {
       return next(new AppError("Unauthorized: Missing user payload.", 401));
     }
 
-    const type = req.query.type as string;
+    const type = (req.query.type as string) || "punch_power";
     const limit = Math.max(1, parseInt(req.query.limit as string) || 50);
     const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
 
-    const currentUserProfile = await prisma.user_sport_profiles.findFirst({
-      where: { user_id: userId, is_primary: true },
-    });
+    const currentUserProfile =
+      (await prisma.user_sport_profiles.findFirst({
+        where: {
+          user_id: userId,
+          is_primary: true,
+        },
+      })) ??
+      (await prisma.user_sport_profiles.findFirst({
+        where: {
+          user_id: userId,
+        },
+      }));
 
     if (!currentUserProfile) {
       return next(
@@ -264,22 +274,47 @@ export const getLeaderboard = async (
     const category: player_category =
       (req.query.player_category as player_category) ||
       currentUserProfile.player_category;
+
     const level: competitive_level =
       (req.query.level as competitive_level) || currentUserProfile.level;
 
     const cohortUsers = await prisma.user_sport_profiles.findMany({
-      where: { player_category: category, level: level, is_primary: true },
-      select: { user_id: true },
+      where: {
+        sport_id: currentUserProfile.sport_id,
+        player_category: category,
+        level,
+      },
+      select: {
+        user_id: true,
+      },
     });
+
     const cohortUserIds = cohortUsers.map((p) => p.user_id);
 
     if (cohortUserIds.length === 0) {
-      res.status(200).json([]);
+      res.status(200).json({
+        success: true,
+        data: {
+          cohort: {
+            type,
+            sport_id: currentUserProfile.sport_id,
+            level,
+            player_category: category,
+            athlete_count: 0,
+          },
+          leaderboard: [],
+          current_user: null,
+        },
+      });
       return;
     }
 
     const usersWithDob = await prisma.users.findMany({
-      where: { id: { in: cohortUserIds } },
+      where: {
+        id: {
+          in: cohortUserIds,
+        },
+      },
       select: {
         id: true,
         date_of_birth: true,
@@ -289,6 +324,7 @@ export const getLeaderboard = async (
     });
 
     const userAgeGroupMap = new Map<string, number>();
+
     for (const u of usersWithDob) {
       userAgeGroupMap.set(u.id, getAgeGroupId(u.date_of_birth));
     }
@@ -298,11 +334,12 @@ export const getLeaderboard = async (
         ? [1, 2, 4]
         : type === "strength"
           ? [1, 5, 6]
-          : [7, 8, 9]; // endurance
+          : [7, 8, 9];
 
     const scores = await Promise.all(
       cohortUserIds.map(async (uid) => {
         const ageGroup = userAgeGroupMap.get(uid) || 2;
+
         const compositeScore = await getUserCompositeScore(
           uid,
           selectedTestIds,
@@ -319,9 +356,11 @@ export const getLeaderboard = async (
           user_id: uid,
           username: userInfo?.username || "Unknown",
           profile_photo: userInfo?.profile_photo || null,
-          [`${type}_score`]: Number(compositeScore.toFixed(2)),
+          percentile_score: Number(compositeScore.toFixed(0)),
+          delta_trend: "+0",
+          trend_status: "up",
           player_category: category,
-          level: level,
+          level,
           is_current_user: uid === userId,
           score: compositeScore,
         };
@@ -329,23 +368,43 @@ export const getLeaderboard = async (
     );
 
     let leaderboardData = scores.filter((s) => s !== null) as any[];
+
     leaderboardData.sort((a, b) => b.score - a.score);
 
     leaderboardData = leaderboardData.map((item, idx) => {
       const { score, ...cleanItem } = item;
-      return { rank: idx + 1, ...cleanItem };
+
+      return {
+        rank: idx + 1,
+        ...cleanItem,
+      };
     });
 
-    // تطبيق الـ Pagination
     const paginatedData = leaderboardData.slice(offset, offset + limit);
 
-    // التأكد إن اللاعب الحالي موجود في الرد، حتى لو مش في الصفحة الحالية
     const currentUserEntry = leaderboardData.find((a) => a.is_current_user);
-    if (currentUserEntry && !paginatedData.some((a) => a.user_id === userId)) {
+
+    if (
+      currentUserEntry &&
+      !paginatedData.some((a) => a.user_id === userId)
+    ) {
       paginatedData.push(currentUserEntry);
     }
 
-    res.status(200).json(paginatedData);
+    res.status(200).json({
+      success: true,
+      data: {
+        cohort: {
+          type,
+          sport_id: currentUserProfile.sport_id,
+          level,
+          player_category: category,
+          athlete_count: leaderboardData.length,
+        },
+        leaderboard: paginatedData,
+        current_user: currentUserEntry || null,
+      },
+    });
   } catch (error: any) {
     console.error("Leaderboard Error:", error);
     next(error);
@@ -369,9 +428,18 @@ export const getMostImproved = async (
     const limit = Math.max(1, parseInt(req.query.limit as string) || 50);
     const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
 
-    const currentUserProfile = await prisma.user_sport_profiles.findFirst({
-      where: { user_id: userId, is_primary: true },
-    });
+    const currentUserProfile =
+      (await prisma.user_sport_profiles.findFirst({
+        where: {
+          user_id: userId,
+          is_primary: true,
+        },
+      })) ??
+      (await prisma.user_sport_profiles.findFirst({
+        where: {
+          user_id: userId,
+        },
+      }));
 
     if (!currentUserProfile) {
       return next(new AppError("Cannot determine cohort.", 400));
@@ -384,13 +452,31 @@ export const getMostImproved = async (
       (req.query.level as competitive_level) || currentUserProfile.level;
 
     const cohortUsers = await prisma.user_sport_profiles.findMany({
-      where: { player_category: category, level: level, is_primary: true },
+      where: {
+        sport_id: currentUserProfile.sport_id,
+        player_category: category,
+        level: level
+      },
       select: { user_id: true },
     });
+
     const cohortUserIds = cohortUsers.map((p) => p.user_id);
 
     if (cohortUserIds.length === 0) {
-      res.status(200).json([]);
+      res.status(200).json({
+        success: true,
+        data: {
+          cohort: {
+            type: "most_improved",
+            sport_id: currentUserProfile.sport_id,
+            level,
+            player_category: category,
+            athlete_count: 0,
+          },
+          leaderboard: [],
+          current_user: null,
+        },
+      });
       return;
     }
 
@@ -398,6 +484,7 @@ export const getMostImproved = async (
       where: { id: { in: cohortUserIds } },
       select: { id: true, date_of_birth: true },
     });
+
     const userAgeGroupMap = new Map<string, number>();
     for (const u of usersWithDob) {
       userAgeGroupMap.set(u.id, getAgeGroupId(u.date_of_birth));
@@ -409,13 +496,15 @@ export const getMostImproved = async (
     const rawImprovedResults: any[] = await prisma.$queryRaw`
       WITH cohort_users AS (
           SELECT user_id FROM user_sport_profiles
-          WHERE is_primary = true AND player_category::text = ${category} AND level::text = ${level}
+          WHERE player_category::text = ${category}
+            AND level::text = ${level}
+            AND sport_id = ${currentUserProfile.sport_id}
       ),
       snapshots_in_range AS (
           SELECT id, user_id, created_at
           FROM physical_snapshots
           WHERE user_id IN (SELECT user_id FROM cohort_users)
-            AND sport_id = 1
+            AND sport_id = ${currentUserProfile.sport_id}
             AND created_at >= ${thirtyDaysAgo}
       ),
       first_snap AS (
@@ -441,7 +530,7 @@ export const getMostImproved = async (
     let leaderboardData: any[] = [];
 
     if (rawImprovedResults && rawImprovedResults.length > 0) {
-      const punchPowerTestIds = [1, 2, 4];
+      const punchPowerTestIds = [1, 2, 4]; // ممكن تخليها Dynamic بعدين زي GetLeaderboard
 
       const improvementData = await Promise.all(
         rawImprovedResults.map(async (ath) => {
@@ -486,22 +575,33 @@ export const getMostImproved = async (
       }));
     }
 
-    // تطبيق الـ Pagination
     const paginatedData = leaderboardData.slice(offset, offset + limit);
 
-    // التأكد من وجود اللاعب الحالي
     const currentUserEntry = leaderboardData.find((a) => a.is_current_user);
     if (currentUserEntry && !paginatedData.some((a) => a.id === userId)) {
       paginatedData.push(currentUserEntry);
     }
 
-    // تنظيف الـ ID الداخلي وتحويله لـ user_id قبل الإرجاع النهائي
     const finalData = paginatedData.map(({ id, ...rest }) => ({
       user_id: id,
       ...rest,
     }));
 
-    res.status(200).json(finalData);
+    // توحيد الـ Response عشان يطابق GetLeaderboard
+    res.status(200).json({
+      success: true,
+      data: {
+        cohort: {
+          type: "most_improved",
+          sport_id: currentUserProfile.sport_id,
+          level,
+          player_category: category,
+          athlete_count: leaderboardData.length,
+        },
+        leaderboard: finalData,
+        current_user: currentUserEntry ? { user_id: currentUserEntry.id, ...currentUserEntry } : null,
+      },
+    });
   } catch (error: any) {
     console.error("Most Improved Error:", error);
     next(error);

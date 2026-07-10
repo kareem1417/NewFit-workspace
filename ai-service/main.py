@@ -1,7 +1,7 @@
 import psycopg2
 import joblib
 import pandas as pd
-import os   
+import os
 from groq import Groq
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -73,8 +73,71 @@ class PerformanceRequest(BaseModel):
 
 @app.post("/ask")
 def ask_ai(request: QueryRequest):
-    # (Same code as before for RAG logic)
-    pass 
+    try:
+        if not GROQ_API_KEY:
+            return {
+                "answer": "AI service is not configured. Missing GROQ_API_KEY.",
+                "sources": [],
+                "suggested_program_ids": []
+            }
+
+        history_messages = []
+        if request.history:
+            for msg in request.history[-6:]:
+                role = "assistant" if msg.role == "assistant" else "user"
+                history_messages.append({
+                    "role": role,
+                    "content": msg.content
+                })
+
+        system_prompt = f"""
+You are Ringside AI, a helpful sports performance and fitness advisor inside the NeoFit app.
+
+User context:
+- Sport: {request.sport or "General Fitness"}
+- Goal: {request.user_goal or "General"}
+- Current program: {request.current_program or "None"}
+
+Give practical, safe, concise advice.
+If the user asks for medical/injury advice, recommend seeing a professional.
+"""
+
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            *history_messages,
+            {
+                "role": "user",
+                "content": request.question
+            }
+        ]
+
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=700,
+        )
+
+        answer = completion.choices[0].message.content
+
+        return {
+            "answer": answer,
+            "sources": [],
+            "suggested_program_ids": []
+        }
+
+    except Exception as e:
+        print(f"Ask AI Error: {e}")
+        return {
+            "answer": "Sorry, I could not generate an AI response right now. Please try again.",
+            "sources": [],
+            "suggested_program_ids": [],
+            "error": str(e)
+        }
+
 
 @app.post("/recommend")
 def recommend_program(profile: UserProfile):
@@ -97,9 +160,9 @@ def recommend_program(profile: UserProfile):
             'Explosiveness_Score': profile.Explosiveness_Score,
             'Recovery_Score': profile.Recovery_Score
         }
-        
+
         df_input = pd.DataFrame([input_data])[expected_features]
-        
+
         categorical_cols = ['Sport_Type', 'Level', 'Goal']
         for col in categorical_cols:
             df_input[col] = df_input[col].astype('category')
@@ -112,10 +175,10 @@ def recommend_program(profile: UserProfile):
             reason += "As a beginner, this program focuses on building foundational mechanics safely."
         elif profile.Level == "Professional":
             reason += "For your advanced level, it includes high-intensity drills to break plateaus."
-            
+
         return {
             "recommended_program": recommended_program_title,
-            "confidence": "95.5%", 
+            "confidence": "95.5%",
             "model_used": "LightGBM Classifier",
             "reason": reason
         }
@@ -125,8 +188,11 @@ def recommend_program(profile: UserProfile):
 
 @app.post("/coach-analysis")
 def get_coach_analysis(request: PerformanceRequest):
-    # (Same code as before for coach analysis)
-    pass
+    return {
+        "analysis": "Coach analysis is not implemented yet.",
+        "recommendations": []
+    }
+
 
 if __name__ == "__main__":
     import uvicorn

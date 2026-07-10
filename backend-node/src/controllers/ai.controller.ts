@@ -13,6 +13,42 @@ const calculateAge = (dob: Date) => {
   const diff = Date.now() - dob.getTime();
   return Math.abs(new Date(diff).getUTCFullYear() - 1970);
 };
+const mapUserGoalToProgramGoal = (goal: string): string => {
+  const normalized = goal.toLowerCase();
+
+  const map: Record<string, string> = {
+    weight_loss: "general",
+    muscle_gain: "strength",
+    endurance: "endurance",
+    strength: "strength",
+    agility: "speed",
+    speed: "speed",
+    flexibility: "general",
+    recovery: "general",
+    power: "power",
+    general: "general",
+  };
+
+  return map[normalized] || "general";
+};
+
+const formatProgramCard = (p: any) => ({
+  id: p.id,
+  title: p.title,
+  description: p.description || "",
+  goal_primary: p.goal_primary,
+  level_target: p.level_target,
+  duration_weeks: p.duration_weeks,
+  sessions_per_week: p.sessions_per_week,
+  cover_image: p.cover_image,
+  rating_avg: p.rating_avg ? String(p.rating_avg) : "0",
+  rating_count: p.rating_count || 0,
+  enrollment_count: p.enrollment_count || 0,
+  sport_name: p.sports?.name || "General",
+  coach_name: p.users?.username || "Unknown Coach",
+  coach_photo: p.users?.profile_photo || null,
+});
+
 
 export const askQuestion = async (
   req: AuthRequest,
@@ -211,17 +247,15 @@ export const recommendProgram = async (
 ): Promise<void> => {
   try {
     const userId = req.user?.sub as string;
-    const overrides = req.body; // الداتا اللي اليوزر ممكن يكون عدلها في الشاشة
+    const overrides = req.body || {};
 
-    // 1. Fetch user with their sport profile and latest metrics
     const user = await prisma.users.findUnique({
       where: { id: userId },
       include: {
         user_sport_profiles: {
-          where: { is_primary: true },
           include: { sports: true },
         },
-        user_metrics: true, // Fetch metrics table
+        user_metrics: true,
       },
     });
 
@@ -238,21 +272,34 @@ export const recommendProgram = async (
       );
     }
 
-    const primaryProfile = user.user_sport_profiles[0];
+    const primaryProfile =
+      user.user_sport_profiles.find((p) => p.is_primary) ??
+      user.user_sport_profiles[0];
+
+    if (!primaryProfile) {
+      return next(
+        new AppError(
+          "Sport profile not found. Please complete onboarding first.",
+          400,
+        ),
+      );
+    }
+
     let metrics = user.user_metrics;
 
-    // 🎯 2. السحر هنا: لو اليوزر بعت تعديلات، نحدث الداتا بيز الأول قبل ما نكلم الموديل
     if (overrides && Object.keys(overrides).length > 0) {
       metrics = await prisma.user_metrics.update({
         where: { user_id: userId },
         data: {
-          ...(overrides.height_cm && {
+          ...(overrides.height_cm !== undefined && {
             height_cm: Number(overrides.height_cm),
           }),
-          ...(overrides.weight_kg && {
+          ...(overrides.weight_kg !== undefined && {
             weight_kg: Number(overrides.weight_kg),
           }),
-          ...(overrides.goal && { goal: overrides.goal }),
+          ...(overrides.goal !== undefined && {
+            goal: overrides.goal,
+          }),
           ...(overrides.training_days_per_week !== undefined && {
             training_days_per_week: Number(overrides.training_days_per_week),
           }),
@@ -260,50 +307,47 @@ export const recommendProgram = async (
             years_training: Number(overrides.years_training),
           }),
           ...(overrides.has_injury_history !== undefined && {
-            has_injury_history: overrides.has_injury_history,
+            has_injury_history: Boolean(overrides.has_injury_history),
           }),
-          ...(overrides.endurance_score && {
+          ...(overrides.endurance_score !== undefined && {
             endurance_score: Number(overrides.endurance_score),
           }),
-          ...(overrides.strength_score && {
+          ...(overrides.strength_score !== undefined && {
             strength_score: Number(overrides.strength_score),
           }),
-          ...(overrides.speed_score && {
+          ...(overrides.speed_score !== undefined && {
             speed_score: Number(overrides.speed_score),
           }),
-          ...(overrides.flexibility_score && {
+          ...(overrides.flexibility_score !== undefined && {
             flexibility_score: Number(overrides.flexibility_score),
           }),
-          ...(overrides.explosiveness_score && {
+          ...(overrides.explosiveness_score !== undefined && {
             explosiveness_score: Number(overrides.explosiveness_score),
           }),
-          ...(overrides.recovery_score && {
+          ...(overrides.recovery_score !== undefined && {
             recovery_score: Number(overrides.recovery_score),
           }),
         },
       });
     }
 
-    // 3. Calculate age
     const userAge = calculateAge(user.date_of_birth);
 
-    // 4. Calculate BMI (Weight / (Height in m)^2)
     const heightInMeters = Number(metrics.height_cm) / 100;
     const calculatedBMI =
       Number(metrics.weight_kg) / (heightInMeters * heightInMeters);
 
-    // 5. Build the actual Payload for the ML model (using the freshly updated metrics)
     const mlPayload = {
       Age: userAge,
       Height_cm: Number(metrics.height_cm),
       Weight_kg: Number(metrics.weight_kg),
       BMI: Number(calculatedBMI.toFixed(1)),
-      Sport_Type: primaryProfile?.sports?.name || "General Fitness",
-      Level: primaryProfile?.level
+      Sport_Type: primaryProfile.sports?.name || "General Fitness",
+      Level: primaryProfile.level
         ? primaryProfile.level.charAt(0).toUpperCase() +
           primaryProfile.level.slice(1)
-        : "Beginner",
-      Goal: metrics.goal.replace(/_/g, " "), // Convert Muscle_Gain to Muscle Gain
+        : "Novice",
+      Goal: String(metrics.goal).replace(/_/g, " "),
       Training_Days_Per_Week: metrics.training_days_per_week,
       Years_Training: Number(metrics.years_training),
       Has_Injury_History: metrics.has_injury_history ? 1 : 0,
@@ -317,12 +361,118 @@ export const recommendProgram = async (
 
     const recommendation = await getProgramRecommendation(mlPayload);
 
-    // 🎯 التعديل هنا: رجعنا الـ metrics جوه الـ data
+    if (!recommendation) {
+      return next(new AppError("AI recommendation service returned no data.", 502));
+    }
+
+    if (recommendation?.error) {
+      return next(
+        new AppError(
+          `AI recommendation failed: ${recommendation.error}`,
+          502,
+        ),
+      );
+    }
+
+    const programGoal = mapUserGoalToProgramGoal(String(metrics.goal));
+
+    let recommendedPrograms = await prisma.programs.findMany({
+      where: {
+        is_published: true,
+        sport_id: primaryProfile.sport_id,
+        OR: [
+          {
+            title: {
+              contains: recommendation.recommended_program || "",
+              mode: "insensitive",
+            },
+          },
+          {
+            goal_primary: programGoal as any,
+          },
+          {
+            level_target: primaryProfile.level,
+          },
+        ],
+      },
+      orderBy: [{ rating_avg: "desc" }, { enrollment_count: "desc" }],
+      take: 5,
+      include: {
+        sports: {
+          select: {
+            name: true,
+          },
+        },
+        users: {
+          select: {
+            username: true,
+            profile_photo: true,
+          },
+        },
+      },
+    });
+
+    if (recommendedPrograms.length === 0) {
+      recommendedPrograms = await prisma.programs.findMany({
+        where: {
+          is_published: true,
+          sport_id: primaryProfile.sport_id,
+        },
+        orderBy: [{ rating_avg: "desc" }, { enrollment_count: "desc" }],
+        take: 5,
+        include: {
+          sports: {
+            select: {
+              name: true,
+            },
+          },
+          users: {
+            select: {
+              username: true,
+              profile_photo: true,
+            },
+          },
+        },
+      });
+    }
+
+    if (recommendedPrograms.length === 0) {
+      recommendedPrograms = await prisma.programs.findMany({
+        where: {
+          is_published: true,
+        },
+        orderBy: [{ rating_avg: "desc" }, { enrollment_count: "desc" }],
+        take: 5,
+        include: {
+          sports: {
+            select: {
+              name: true,
+            },
+          },
+          users: {
+            select: {
+              username: true,
+              profile_photo: true,
+            },
+          },
+        },
+      });
+    }
+
     res.status(200).json({
       success: true,
       data: {
-        recommendation: recommendation,
+        recommendation,
+        recommended_programs: recommendedPrograms.map(formatProgramCard),
         user_metrics: metrics,
+        sport_profile: {
+          id: primaryProfile.id,
+          sport_id: primaryProfile.sport_id,
+          sport_name: primaryProfile.sports?.name || null,
+          level: primaryProfile.level,
+          player_category: primaryProfile.player_category,
+          is_primary: primaryProfile.is_primary,
+        },
       },
     });
   } catch (error: any) {
@@ -330,6 +480,7 @@ export const recommendProgram = async (
     next(new AppError("Failed to get program recommendation", 500));
   }
 };
+
 
 export const getCoachAdvice = async (
   req: AuthRequest,

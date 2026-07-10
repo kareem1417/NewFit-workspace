@@ -24,7 +24,21 @@ export const recommendValidation: ValidationChain[] = [
     // Validate potential overrides from the frontend
     body("height_cm").optional().isNumeric(),
     body("weight_kg").optional().isNumeric(),
-    body("goal").optional().isString(),
+    body("goal")
+      .optional()
+      .isIn([
+        "Weight_Loss",
+        "Muscle_Gain",
+        "Endurance",
+        "Strength",
+        "Agility",
+        "Speed",
+        "Flexibility",
+        "Recovery",
+        "Power",
+        "General",
+      ])
+      .withMessage("Validation error — invalid goal."),
     body("training_days_per_week").optional().isInt({ min: 1, max: 7 }),
     body("years_training").optional().isNumeric(),
     body("has_injury_history").optional().isBoolean(),

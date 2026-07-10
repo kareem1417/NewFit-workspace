@@ -2,6 +2,21 @@ import { body, query, ValidationChain } from "express-validator";
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "../utils/AppError"; // 🎯 تأكد من المسار
 
+const PROGRAM_GOALS = [
+  "strength",
+  "explosiveness",
+  "endurance",
+  "power",
+  "general",
+  "speed",
+];
+
+const COMPETITIVE_LEVELS = [
+  "novice",
+  "amateur",
+  "professional",
+];
+
 // ==========================================
 // 1. Create Program Validation (Coach Only)
 // ==========================================
@@ -15,7 +30,18 @@ export const createProgramValidation: (ValidationChain | ((req: Request, res: Re
   },
   body("title").notEmpty().withMessage("Validation error — title required.").trim().isLength({ min: 1 }).withMessage("Validation error — title required."),
   body("sport_id").notEmpty().withMessage("Validation error — sport_id is required."),
-  body("goal_primary").optional().trim().toLowerCase().isIn(["power", "strength", "hypertrophy", "endurance"]).withMessage("Validation error — Invalid goal_primary enum."),
+  body("goal_primary")
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(PROGRAM_GOALS)
+    .withMessage("Validation error — Invalid goal_primary enum."),
+  body("level_target")
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(COMPETITIVE_LEVELS)
+    .withMessage("Validation error — Invalid level_target enum."),
 ];
 
 // ==========================================
@@ -27,8 +53,18 @@ export const listProgramsValidation: (ValidationChain | ((req: Request, res: Res
   query("sport_id").optional().isNumeric().withMessage("Validation error — sport_id must be a valid number."),
   query("duration_weeks").optional().isInt({ gt: 0 }).withMessage("Validation error — duration_weeks must be a positive number."),
   query("min_rating").optional().isFloat({ min: 0, max: 5 }).withMessage("Validation error — min_rating must be between 0 and 5."),
-  query("goal").optional().trim().toLowerCase().isIn(["power", "strength", "hypertrophy", "endurance"]).withMessage("Validation error — invalid goal filter."),
-  query("level").optional().trim().toLowerCase().isIn(["novice", "amateur", "intermediate", "advanced"]).withMessage("Validation error — invalid level filter."),
+  query("goal")
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(PROGRAM_GOALS)
+    .withMessage("Validation error — invalid goal filter."),
+  query("level")
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(COMPETITIVE_LEVELS)
+    .withMessage("Validation error — invalid level filter."),
 ];
 
 // ==========================================
