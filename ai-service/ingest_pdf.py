@@ -3,8 +3,19 @@ import psycopg2
 from langchain_community.document_loaders import TextLoader # التعديل هنا
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
+from dotenv import load_dotenv
 
-DB_CONFIG = os.environ.get("DATABASE_URL", "host=localhost dbname=ringside user=postgres password=rootpassword port=5432")
+load_dotenv()
+
+# ── Database connection ──────────────────────────────────────────────────────
+# .env has a postgresql:// URI; psycopg2 can accept it directly
+raw_db_url = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://postgres:rootpassword@localhost:5432/ringside"
+)
+# Strip Prisma's ?schema=public query string — psycopg2 doesn't understand it
+DB_CONFIG = raw_db_url.split('?')[0] if '?' in raw_db_url else raw_db_url
+
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 def ingest_text(file_name, sport="general"):
@@ -41,6 +52,9 @@ def ingest_text(file_name, sport="general"):
         conn = psycopg2.connect(DB_CONFIG)
         cur = conn.cursor()
 
+        # Ensure pgvector extension is available
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
         for chunk in chunks:
             # ملفات الـ Text مفيهاش صفحات، فهنثبتها أو نشيلها براحتك
             original_text = chunk.page_content
@@ -49,13 +63,15 @@ def ingest_text(file_name, sport="general"):
             enriched_content = f"[Source: {source_file}]\n{original_text}"
             
             vector = embeddings.embed_query(enriched_content)
+            # Convert vector list to pgvector-compatible string: '[0.1,0.2,...]'
+            vector_str = '[' + ','.join(str(v) for v in vector) + ']'
             
             cur.execute(
                 """
-                INSERT INTO knowledge_chunks (id, sport, topic, content, embedding, "created_at")
-                VALUES (gen_random_uuid(), %s, %s, %s, %s, NOW())
+                INSERT INTO knowledge_chunks (id, sport, topic, source, content, embedding, created_at)
+                VALUES (gen_random_uuid(), %s, %s, %s, %s, %s::vector, NOW())
                 """,
-                (sport, "training_knowledge", enriched_content, vector)
+                (sport, "training_knowledge", source_file, enriched_content, vector_str)
             )
         
         conn.commit()
@@ -70,7 +86,7 @@ def ingest_text(file_name, sport="general"):
 if __name__ == "__main__":
     # === General Fitness, Physiology & Conditioning ===
     ingest_text("2264_Essentials_of_Strength_Training_and_Conditioning_4th_Edition-sport.ta4a.us.txt", sport="general")
-    ingest_text("ACSM’s Exercise for Older Adults (Wojtek J. Chodzko-Zajko) (z-library.sk, 1lib.sk, z-lib.sk).txt", sport="general")
+    ingest_text("ACSM's Exercise for Older Adults (Wojtek J. Chodzko-Zajko) (z-library.sk, 1lib.sk, z-lib.sk).txt", sport="general")
     ingest_text("ACSMs Guidelines for Exercise Testing and Prescription, 9e ( etc.) (z-library.sk, 1lib.sk, z-lib.sk).txt", sport="general")
     ingest_text("Developing better athletes, better people  a leaders guide to transforming high school and youth sports into a development… (Thompson, Jim, 1949- author, Rivers, Glenn etc.) (z-library.sk, 1lib.sk, z-lib.sk).txt", sport="general")
     ingest_text("Effects of Plyometric Training on Sports Performance in Team Sports: A Literature Review.txt", sport="general")

@@ -98,3 +98,5 @@ websockets==16.0
 xxhash==3.7.0
 zstandard==0.25.0
 pymongo
+psycopg2-binary
+langchain-community

@@ -19,7 +19,8 @@ app = FastAPI(title="Ringside AI Service", description="AI and ML Engine for Neo
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
-raw_db_url = os.environ.get("DATABASE_URL", "host=localhost dbname=ringside user=postgres password=rootpassword port=5432")
+# ── Database connection ──────────────────────────────────────────────────────
+raw_db_url = os.environ.get("DATABASE_URL", "postgresql://postgres:rootpassword@localhost:5432/ringside")
 DB_CONFIG = raw_db_url.split('?')[0] if '?' in raw_db_url else raw_db_url
 
 try:
@@ -71,6 +72,116 @@ class PerformanceRequest(BaseModel):
     raw_accelerator: float
     raw_transfer: float
 
+class ReadinessInputs(BaseModel):
+    sleep_hours: float
+    fatigue: int
+    soreness: int
+    stress: int
+
+class ReadinessHistory(BaseModel):
+    seven_day_average: Optional[float] = None
+    yesterday_score: Optional[int] = None
+    previous_workout_rpe: Optional[int] = None
+    previous_workout_duration_minutes: Optional[int] = None
+    days_since_last_workout: Optional[int] = None
+
+class ReadinessWorkout(BaseModel):
+    session_name: Optional[str] = None
+    estimated_duration_minutes: Optional[int] = None
+
+class ReadinessAdviceRequest(BaseModel):
+    score: int
+    status: str
+    recommendation: str
+    intensity_adjustment: int
+    inputs: ReadinessInputs
+    history: Optional[ReadinessHistory] = None
+    workout: Optional[ReadinessWorkout] = None
+    sport: Optional[str] = "general"
+    level: Optional[str] = None
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RAG — Knowledge Retrieval with pgvector + CrossEncoder Re-ranking
+# ══════════════════════════════════════════════════════════════════════════════
+
+def search_knowledge(query: str, sport: str = "general", limit: int = 10) -> list[dict]:
+    """
+    Stage 1: Embed the query and retrieve candidate chunks from pgvector.
+    Returns raw rows (content, source, score) sorted by cosine distance.
+    """
+    try:
+        query_vector = embeddings.embed_query(query)
+        vector_str = '[' + ','.join(str(v) for v in query_vector) + ']'
+
+        conn = psycopg2.connect(DB_CONFIG)
+        cur = conn.cursor()
+
+        # Fetch candidates — filter by sport if not "general"
+        # Use cosine distance operator <=> from pgvector
+        sport_lower = sport.lower().replace(" ", "_")
+
+        cur.execute(
+            """
+            SELECT content, source, (embedding <=> %s::vector) AS distance
+            FROM knowledge_chunks
+            WHERE sport = %s OR sport = 'general'
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+            """,
+            (vector_str, sport_lower, vector_str, limit)
+        )
+
+        results = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return [
+            {"content": row[0], "source": row[1] or "Unknown", "distance": float(row[2])}
+            for row in results
+        ]
+    except Exception as e:
+        print(f"⚠️ Knowledge search error: {e}")
+        return []
+
+
+def rerank_results(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
+    """
+    Stage 2: Re-rank candidates using CrossEncoder for higher precision.
+    """
+    if not candidates:
+        return []
+
+    pairs = [(query, c["content"]) for c in candidates]
+    scores = cross_encoder.predict(pairs)
+
+    for i, score in enumerate(scores):
+        candidates[i]["rerank_score"] = float(score)
+
+    # Sort by CrossEncoder relevance (higher = better)
+    ranked = sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
+    return ranked[:top_k]
+
+
+def build_rag_context(chunks: list[dict]) -> str:
+    """
+    Build a context block from retrieved knowledge chunks for the LLM prompt.
+    """
+    if not chunks:
+        return ""
+
+    context_parts = []
+    for i, chunk in enumerate(chunks, 1):
+        source = chunk.get("source", "Unknown")
+        content = chunk["content"]
+        context_parts.append(f"[{i}] (Source: {source})\n{content}")
+
+    return "\n\n---\n\n".join(context_parts)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
 @app.post("/ask")
 def ask_ai(request: QueryRequest):
     try:
@@ -81,6 +192,15 @@ def ask_ai(request: QueryRequest):
                 "suggested_program_ids": []
             }
 
+        # ── Stage 1+2: RAG Retrieval ─────────────────────────────────────
+        candidates = search_knowledge(request.question, sport=request.sport, limit=10)
+        top_chunks = rerank_results(request.question, candidates, top_k=5)
+        rag_context = build_rag_context(top_chunks)
+
+        # Collect unique source names for the response
+        sources = list({c.get("source", "Unknown") for c in top_chunks if c.get("source")})
+
+        # ── Build conversation history ───────────────────────────────────
         history_messages = []
         if request.history:
             for msg in request.history[-6:]:
@@ -90,16 +210,31 @@ def ask_ai(request: QueryRequest):
                     "content": msg.content
                 })
 
-        system_prompt = f"""
-You are Ringside AI, a helpful sports performance and fitness advisor inside the NeoFit app.
+        # ── System prompt with RAG context ───────────────────────────────
+        context_block = ""
+        if rag_context:
+            context_block = f"""
+Below is relevant knowledge from our training library. Use it to ground your answer.
+If the knowledge doesn't cover the question, rely on your general expertise but mention
+that the answer is based on general knowledge.
+
+--- KNOWLEDGE BASE CONTEXT ---
+{rag_context}
+--- END CONTEXT ---
+"""
+
+        system_prompt = f"""You are Ringside AI, a helpful sports performance and fitness advisor inside the NeoFit app.
 
 User context:
 - Sport: {request.sport or "General Fitness"}
 - Goal: {request.user_goal or "General"}
 - Current program: {request.current_program or "None"}
-
-Give practical, safe, concise advice.
-If the user asks for medical/injury advice, recommend seeing a professional.
+{context_block}
+Instructions:
+- Give practical, safe, concise advice grounded in the knowledge base context when available.
+- Cite sources when referencing specific information (e.g., "According to [Source Name]...").
+- If the user asks for medical/injury advice, recommend seeing a professional.
+- Keep responses focused and actionable.
 """
 
         messages = [
@@ -125,7 +260,7 @@ If the user asks for medical/injury advice, recommend seeing a professional.
 
         return {
             "answer": answer,
-            "sources": [],
+            "sources": sources,
             "suggested_program_ids": []
         }
 
@@ -138,6 +273,15 @@ If the user asks for medical/injury advice, recommend seeing a professional.
             "error": str(e)
         }
 
+@app.post("/readiness-advice")
+def readiness_advice(request: ReadinessAdviceRequest):
+    return {
+        "summary": f"Today's readiness score is {request.score}/100.",
+        "explanation": "This readiness advice is generated from your readiness inputs and training context.",
+        "advice": request.recommendation,
+        "safety_note": "Listen to your body. If you feel sharp pain or unusual symptoms, stop training and consult a professional.",
+        "sources": []
+    }
 
 @app.post("/recommend")
 def recommend_program(profile: UserProfile):

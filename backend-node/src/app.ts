@@ -11,6 +11,8 @@ import socialRoutes from "./routes/social.routes";
 import searchRoutes from "./routes/search.routes";
 import leaderboardsRoutes from "./routes/leaderboards.routes";
 import coachRoutes from "./routes/coaches.routes";
+import readinessRoutes from "./routes/readiness.routes";
+
 import workoutsRoutes from "./routes/workouts.routes";
 import { errorHandler } from "./middlewares/errorHandler.middleware";
 import swaggerUi from "swagger-ui-express";
@@ -35,6 +37,8 @@ app.use("/api/search", searchRoutes);
 app.use("/api/leaderboards", leaderboardsRoutes);
 app.use("/api/workouts", workoutsRoutes);
 app.use("/api/coaches", coachRoutes);
+app.use("/api/readiness", readinessRoutes);
+
 
 app.use(errorHandler);
 app.get("/", (req, res) => {

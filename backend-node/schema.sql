@@ -410,6 +410,8 @@ CREATE TABLE knowledge_chunks (
     content      TEXT NOT NULL,
     source       VARCHAR(255),
     content_type VARCHAR(50) DEFAULT 'general',
+    sport        VARCHAR(100),
+    topic        VARCHAR(100),
     embedding    vector(384),     -- all-MiniLM-L6-v2 outputs 384 dimensions
     metadata     JSONB DEFAULT '{}',
     created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW()
